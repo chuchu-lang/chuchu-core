@@ -11,12 +11,12 @@ reassign x as 6
 show x
 ```
 
-Strings support UTF-8 text, escapes, concatenation, equality and `len`:
+Strings support UTF-8 text, escapes, concatenation, equality and `length`:
 
 ```chuchu
 assign name as "world 🌍"
 show "Hello, " + name + "!"
-show len(name)
+show length(name)
 ```
 
 See [strings](STRINGS.md) for type annotations, Unicode length, storage semantics

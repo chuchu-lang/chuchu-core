@@ -1,7 +1,6 @@
+# TEMPORARILY DISABLED: automatic triggers removed to save CI resources. Restore the previous push/pull_request triggers (see git history) to re-enable.
 name: Cross-platform native compiler
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read

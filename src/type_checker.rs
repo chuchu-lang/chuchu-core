@@ -82,7 +82,7 @@ pub fn reserved_function(name: &str) -> bool {
             | "min"
             | "max"
             | "sum"
-            | "len"
+            | "length"
             | "main"
             | "printf"
             | "write"
@@ -428,8 +428,8 @@ impl TypeChecker {
                 | "is_eof" | "error_code" | "error_message" | "unwrap",
                 _,
             ) => Err(invalid()),
-            ("len", [Type::Array { .. }]) => Ok(Type::Int),
-            ("len", [Type::String]) => Ok(Type::Int),
+            ("length", [Type::Array { .. }]) => Ok(Type::Int),
+            ("length", [Type::String]) => Ok(Type::Int),
             ("sum", [Type::Array { element, .. }]) => Ok(element.scalar()),
             ("sqrt", [Type::Float]) => Ok(Type::Float),
             ("abs", [ty]) if ty.is_numeric() => Ok(*ty),
@@ -440,7 +440,7 @@ impl TypeChecker {
                     Type::Int
                 })
             }
-            ("len" | "sum" | "sqrt" | "abs" | "min" | "max", _) => Err(invalid()),
+            ("length" | "sum" | "sqrt" | "abs" | "min" | "max", _) => Err(invalid()),
             _ => {
                 let signature =
                     self.functions

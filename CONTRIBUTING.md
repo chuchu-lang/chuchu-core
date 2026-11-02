@@ -33,18 +33,84 @@ behavior. Preserve the O0–O3 behavior matrix and add regression coverage for
 compiler or portability fixes. Performance methodology is documented in
 [performance measurement](docs/performance.md).
 
-## Pull requests and review
+## Branch Naming Conventions
 
-Create short-lived feature branches and keep pull requests focused. Coordinate
-changes to shared interfaces such as `link_object`, executable output handling
-and runtime function signatures before overlapping work. Review shared compiler
-and runtime changes across the supported platforms rather than maintaining
-separate operating-system branches.
+Every change must use a short-lived branch created from `main`.
 
-Require all four native target checks for `main` branch protection. The
-`Cross-platform native compiler` workflow runs on pushes and pull requests;
-its jobs cover macOS ARM64, macOS Intel, Linux x64 GNU and Windows x64 MSVC.
-Do not bypass failing jobs or treat one host's results as validation of another.
+Format: `type/short-description`
+
+Allowed types:
+
+- `feature/` - New functionality
+- `fix/` - Bug fixes
+- `refactor/` - Internal improvements
+- `test/` - Tests
+- `docs/` - Documentation
+- `ci/` - CI/CD changes
+- `chore/` - Maintenance tasks
+
+Use lowercase letters and hyphens.
+Do not create permanent developer-specific branches.
+
+## Pull Requests and Reviews
+
+1. Create a GitHub Issue for significant changes.
+2. Create a branch from the latest `main`.
+3. Make focused changes and add relevant tests.
+4. Open a pull request targeting `main`.
+5. Ensure all required quick checks pass.
+6. Obtain at least one teammate's approval.
+7. Resolve all required review conversations.
+8. Squash and merge the approved PR.
+9. Delete the merged feature branch.
+
+Direct pushes to `main` are prohibited.
+Do not bypass branch protection.
+
+## Shared Compiler Changes
+
+Before implementing a feature that affects multiple
+compiler stages:
+
+1. Agree on the proposed Chuchu syntax.
+2. Identify affected compiler modules.
+3. Coordinate changes to tokens, AST, parser,
+   type checker, code generation, and runtime.
+4. Agree on shared interfaces before coding.
+5. Prefer small foundational PRs where needed.
+6. Add regression tests for new language behavior.
+
+Avoid incompatible simultaneous changes to
+shared compiler interfaces.
+
+## CI/CD Policy
+
+The `quick-checks` job must pass before merging.
+
+It currently validates:
+
+- Rust formatting
+- Python benchmark tooling tests
+- LLVM provisioning script tests
+
+Quick checks do not validate native compiler
+correctness.
+
+The cross-platform native compiler workflow is
+run manually when appropriate, particularly
+before releases and after significant changes.
+
+Do not release unverified native compiler builds.
+
+## Team Coordination
+
+- Assign a primary owner to each feature.
+- Announce planned changes to shared modules.
+- Open draft PRs early for complex features.
+- Keep branches short-lived.
+- Synchronize frequently with `main`.
+- Review teammates' PRs promptly.
+- Document user-visible syntax changes.
 
 ## SDK caches and releases
 
