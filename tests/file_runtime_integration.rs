@@ -181,6 +181,8 @@ struct Case {
 struct Read {
     status: i32,
     data: Option<Vec<u8>>,
+    // Read only by the allocation-tracking test, which is not built on Windows.
+    #[cfg_attr(windows, allow(dead_code))]
     stderr: String,
 }
 
