@@ -181,6 +181,47 @@ impl<'ctx> Generator<'ctx> {
         self.make_result(status, Value { raw, ty }, span)
     }
 
+    /// Ends the program with `message` unless a native helper reported success.
+    fn guard_status_is_ok(
+        &mut self,
+        code: IntValue<'ctx>,
+        message: &str,
+        span: Span,
+    ) -> Result<(), CodegenError> {
+        let success = build(
+            self.builder.build_int_compare(
+                IntPredicate::EQ,
+                code,
+                self.context
+                    .i32_type()
+                    .const_int(ErrorCode::Ok as u64, false),
+                "native.ok",
+            ),
+            span,
+        )?;
+        self.guard(success, message, span)
+    }
+
+    /// Ends the program with `message` when a native helper reported `status`.
+    fn guard_status_is_not(
+        &mut self,
+        code: IntValue<'ctx>,
+        status: ErrorCode,
+        message: &str,
+        span: Span,
+    ) -> Result<(), CodegenError> {
+        let differs = build(
+            self.builder.build_int_compare(
+                IntPredicate::NE,
+                code,
+                self.context.i32_type().const_int(status as u64, false),
+                "native.status",
+            ),
+            span,
+        )?;
+        self.guard(differs, message, span)
+    }
+
     pub(super) fn result_builtin(
         &mut self,
         name: &str,
@@ -238,6 +279,73 @@ impl<'ctx> Generator<'ctx> {
                     span,
                 )?;
                 // Transfer the successful owned string to the caller.
+                self.result_payload(result, span)
+            }
+            (
+                "read_file" | "try_read_file",
+                [
+                    Value {
+                        ty: Type::String, ..
+                    },
+                ],
+            ) => {
+                let result =
+                    self.native_result("cheeku_read_file", ScalarType::String, values, span)?;
+                if name == "try_read_file" {
+                    return Ok(result);
+                }
+                // Report the specific reason before the catch-all, so a failure
+                // explains itself. Codes are the shared runtime codes.
+                let code = self.result_code(result, span)?;
+                self.guard_status_is_not(
+                    code,
+                    ErrorCode::InvalidUtf8,
+                    "read_file failed: the file is not valid UTF-8; use try_read_file() to handle errors",
+                    span,
+                )?;
+                self.guard_status_is_not(
+                    code,
+                    ErrorCode::Nul,
+                    "read_file failed: the file contains a NUL byte; use try_read_file() to handle errors",
+                    span,
+                )?;
+                self.guard_status_is_not(
+                    code,
+                    ErrorCode::Allocation,
+                    "read_file failed: out of memory while reading the file; use try_read_file() to handle errors",
+                    span,
+                )?;
+                self.guard_status_is_ok(
+                    code,
+                    "read_file failed: the file could not be opened or read; use try_read_file() to handle errors",
+                    span,
+                )?;
+                // Transfer the successful owned string to the caller.
+                self.result_payload(result, span)
+            }
+            (
+                "write_file" | "try_write_file",
+                [
+                    Value {
+                        ty: Type::String, ..
+                    },
+                    Value {
+                        ty: Type::String, ..
+                    },
+                ],
+            ) => {
+                let result =
+                    self.native_result("cheeku_write_file", ScalarType::Int, values, span)?;
+                if name == "try_write_file" {
+                    return Ok(result);
+                }
+                let code = self.result_code(result, span)?;
+                self.guard_status_is_ok(
+                    code,
+                    "write_file failed: the file could not be created, written or closed; use try_write_file() to handle errors",
+                    span,
+                )?;
+                // The payload is the byte count; there is nothing to release.
                 self.result_payload(result, span)
             }
             ("parse_int", [value]) if value.ty == Type::String => {
