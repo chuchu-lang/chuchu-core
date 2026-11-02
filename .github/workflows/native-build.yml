@@ -21,7 +21,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          # The Linux LLVM SDK's lldb links libpython3.14, which setup-python puts
+          # on LD_LIBRARY_PATH only when that version is selected.
+          python-version: ${{ runner.os == 'Linux' && '3.14' || '3.13' }}
       - name: Initialize x64 MSVC and Windows SDK
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
