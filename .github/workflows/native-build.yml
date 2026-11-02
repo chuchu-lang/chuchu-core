@@ -91,6 +91,9 @@ jobs:
       - name: Input and result allocation and sanitizer checks (Linux)
         if: runner.os == 'Linux'
         run: python .github/scripts/io-memory-smoke.py --compiler target/debug/cheeku --clang "$LLVM_SYS_231_PREFIX/bin/clang" --sanitize
+      - name: File I/O allocation and sanitizer checks (Linux)
+        if: runner.os == 'Linux'
+        run: python .github/scripts/file-memory-smoke.py --compiler target/debug/cheeku --clang "$LLVM_SYS_231_PREFIX/bin/clang" --sanitize
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --release
       - name: Python regression tests

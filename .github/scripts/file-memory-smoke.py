@@ -20,6 +20,7 @@ BALANCE = '''function relay(value: result<string>) be result<string> {
     if is_ok(local) { return local }
     return err<string>(8)
 }
+function first(path: string) be string { return read_file(path) }
 assign i as 0
 while i < 1000 {
     assign written as write_file("smoke.txt", "round " + to_string(i) + " é\U0001F30D")
@@ -33,6 +34,12 @@ while i < 1000 {
     assign missing as try_read_file("missing/smoke.txt")
     reassign missing as try_read_file("smoke.txt")
     assign refused as try_write_file("missing/smoke.txt", text)
+    if length(first("smoke.txt")) > 100 { show "never" }
+    assign never as 0
+    while length(read_file("smoke.txt")) < 0 { reassign never as never + 1 }
+    assign path as "smoke.txt"
+    reassign path as read_file(path)
+    reassign text as first("smoke.txt") + first("smoke.txt")
     reassign i as i + 1
 }
 show length(read_file("smoke.txt"))

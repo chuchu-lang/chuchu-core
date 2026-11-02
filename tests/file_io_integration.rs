@@ -458,3 +458,301 @@ show read_file("loop.txt")"#;
         run.succeeded_with("2000\n0\nround 1999\n");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage 5: final integration tests. These cover scenarios the earlier tests do
+// not: end-to-end permission failures, file text that looks like format strings,
+// string temporaries in every statement position, symlinks, descriptor limits on
+// every failure path, and standard input read as a file.
+// ---------------------------------------------------------------------------
+
+/// Puts permissions back so the temporary directory can always be removed.
+#[cfg(unix)]
+struct RestorePermissions(Vec<PathBuf>);
+
+#[cfg(unix)]
+impl Drop for RestorePermissions {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        for path in &self.0 {
+            let mode = if path.is_dir() { 0o755 } else { 0o644 };
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+        }
+    }
+}
+
+/// Permission checks are meaningless for root, which can open everything.
+#[cfg(unix)]
+fn permissions_are_enforced() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let probe =
+        std::env::temp_dir().join(format!("cheeku permission probe {}", std::process::id()));
+    fs::write(&probe, b"x").unwrap();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).unwrap();
+    let enforced = fs::File::open(&probe).is_err();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o644)).unwrap();
+    let _ = fs::remove_file(&probe);
+    enforced
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_errors_are_recoverable_with_try_and_fatal_without_it() {
+    use std::os::unix::fs::PermissionsExt;
+    if !permissions_are_enforced() {
+        eprintln!("skipping: running with privileges that bypass file permissions");
+        return;
+    }
+    let source = r#"assign locked as try_read_file("locked.txt")
+show is_ok(locked)
+show error_code(locked)
+show error_code(try_write_file("read only.txt", "changed"))
+show error_code(try_write_file("read only dir/new.txt", "x"))
+show "still running"
+show write_file("read only.txt", "changed")
+show "not reached""#;
+    let prepare = |directory: &Path| {
+        fs::write(directory.join("locked.txt"), b"secret").unwrap();
+        fs::write(directory.join("read only.txt"), b"keep").unwrap();
+        fs::create_dir(directory.join("read only dir")).unwrap();
+        fs::set_permissions(
+            directory.join("locked.txt"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        fs::set_permissions(
+            directory.join("read only.txt"),
+            fs::Permissions::from_mode(0o444),
+        )
+        .unwrap();
+        fs::set_permissions(
+            directory.join("read only dir"),
+            fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+    };
+    for run in run_matrix(&levels(), fixed(source), prepare) {
+        let _restore = RestorePermissions(
+            ["locked.txt", "read only.txt", "read only dir"]
+                .iter()
+                .map(|name| run.case.path.join(name))
+                .collect(),
+        );
+        assert_eq!(run.output.status.code(), Some(1), "{}", run.label);
+        assert_eq!(
+            run.output.stdout,
+            support::native_output("false\n4\n4\n4\nstill running\n"),
+            "{}",
+            run.label
+        );
+        assert!(
+            run.stderr()
+                .contains("write_file failed: the file could not be created"),
+            "{}: {}",
+            run.label,
+            run.stderr()
+        );
+        // A refused write must leave the existing file alone.
+        assert_eq!(run.file("read only.txt"), b"keep");
+        assert!(!run.case.path.join("read only dir/new.txt").exists());
+    }
+}
+
+#[test]
+fn file_text_is_data_never_a_format_string() {
+    // Text that printf, string escapes and the language's own syntax would all
+    // treat specially. It must be shown, measured and copied verbatim.
+    let content = "100% %s %d %n %%\n\"quoted\" \\ back\tTab\r\nassign x as 1\nshow 1\n";
+    let source = r#"assign text as read_file("special.txt")
+show text
+show length(text)
+show write_file("special-copy.txt", text)
+show read_file("special-copy.txt") == text"#;
+    let prepare = |directory: &Path| fs::write(directory.join("special.txt"), content).unwrap();
+    let expected = format!(
+        "{content}\n{}\n{}\ntrue\n",
+        content.chars().count(),
+        content.len()
+    );
+    for run in run_matrix(&levels(), fixed(source), prepare) {
+        run.succeeded_with(&expected);
+        assert_eq!(run.file("special-copy.txt"), content.as_bytes());
+    }
+}
+
+#[test]
+fn string_temporaries_are_correct_in_every_statement_position() {
+    // A file read used as a condition, a loop condition re-evaluated every
+    // iteration, a return value, a show argument, and a reassignment whose new
+    // value is computed from the variable it replaces.
+    let source = r#"function first(path: string) be string { return read_file(path) }
+function twice(path: string) be string { return read_file(path) + read_file(path) }
+function pick(path: string) be string {
+    if length(read_file(path)) > 3 { return read_file(path) }
+    return "short"
+}
+function wrapped(path: string) be result<string> { return try_read_file(path) }
+assign p as "a.txt"
+if read_file(p) == "hello" { show "if-condition" }
+while length(read_file(p)) < 0 { show "never" }
+assign i as 0
+while read_file(p) == "hello" {
+    reassign i as i + 1
+    if i == 3 { assign changed as write_file(p, "bye") }
+}
+show i
+show first(p)
+show twice(p)
+show pick(p)
+assign name as "a.txt"
+reassign name as read_file(name)
+show name
+assign r as try_read_file(p)
+reassign r as try_read_file(unwrap(r) + ".nope")
+show error_code(r)
+show read_file(p) + read_file(p)
+show length(read_file(p) + to_string(write_file("c.txt", read_file(p))))
+show unwrap(wrapped(p))
+assign k as 0
+while k < 500 {
+    reassign name as first(p) + twice(p)
+    reassign k as k + 1
+}
+show length(name)"#;
+    let prepare = |directory: &Path| fs::write(directory.join("a.txt"), "hello").unwrap();
+    // The loop stops when the file changes on the third pass; "bye" is 3
+    // characters, so pick() falls back to "short".
+    let expected = "if-condition\n3\nbye\nbyebye\nshort\nbye\n4\nbyebye\n4\nbye\n9\n";
+    for run in run_matrix(&levels(), fixed(source), prepare) {
+        run.succeeded_with(expected);
+        assert_eq!(run.file("a.txt"), b"bye");
+        assert_eq!(run.file("c.txt"), b"bye");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_are_followed_for_reading_and_writing() {
+    use std::os::unix::fs::symlink;
+    let source = r#"show read_file("link.txt")
+show write_file("link.txt", "updated")
+show read_file("target.txt")
+show error_code(try_read_file("dangling.txt"))
+show write_file("dangling.txt", "created")
+show read_file("nowhere.txt")"#;
+    let prepare = |directory: &Path| {
+        fs::write(directory.join("target.txt"), "target").unwrap();
+        symlink("target.txt", directory.join("link.txt")).unwrap();
+        symlink("nowhere.txt", directory.join("dangling.txt")).unwrap();
+    };
+    for run in run_matrix(&levels(), fixed(source), prepare) {
+        run.succeeded_with("target\n7\nupdated\n4\n7\ncreated\n");
+        // Writing goes through the link; the link itself is not replaced.
+        assert!(
+            fs::symlink_metadata(run.case.path.join("link.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(run.file("target.txt"), b"updated");
+        assert_eq!(run.file("nowhere.txt"), b"created");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn no_descriptor_leaks_on_any_path_under_a_tight_limit() {
+    // Every outcome of both helpers, 500 times each, with at most 40 open files.
+    // A leak on any path exhausts the limit within a few dozen calls, which turns
+    // later successes into failures and changes the totals below.
+    let source = r#"assign i as 0
+assign wrote as 0
+assign good as 0
+assign utf8 as 0
+assign nul as 0
+assign dir as 0
+assign missing as 0
+assign refused as 0
+while i < 500 {
+    if write_file("w.txt", "round " + to_string(i)) > 0 { reassign wrote as wrote + 1 }
+    if length(read_file("w.txt")) > 0 { reassign good as good + 1 }
+    reassign utf8 as utf8 + error_code(try_read_file("bad-utf8.bin"))
+    reassign nul as nul + error_code(try_read_file("nul.bin"))
+    reassign dir as dir + error_code(try_read_file("a directory"))
+    reassign missing as missing + error_code(try_read_file("missing.txt"))
+    reassign refused as refused + error_code(try_write_file("a directory", "x"))
+    reassign i as i + 1
+}
+show wrote
+show good
+show utf8
+show nul
+show dir
+show missing
+show refused"#;
+    for optimization in LEVELS {
+        let case = Case::new();
+        fs::create_dir(case.path.join("a directory")).unwrap();
+        fs::write(case.path.join("bad-utf8.bin"), b"\xFF").unwrap();
+        fs::write(case.path.join("nul.bin"), b"a\0b").unwrap();
+        let program = case.compile(source, optimization, DebugInfo::None);
+        let output = Command::new("sh")
+            .args(["-c", "ulimit -n 40 && exec \"$0\""])
+            .arg(&program)
+            .current_dir(&case.path)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{optimization:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // 500 x each code: invalid UTF-8 is 5, NUL is 6, the rest are 4.
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "500\n500\n2500\n3000\n2000\n2000\n2000\n",
+            "{optimization:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn standard_input_can_be_read_as_a_file() {
+    use std::io::Write;
+    let source = r#"assign data as try_read_file("/dev/stdin")
+if is_ok(data) {
+    show length(unwrap(data))
+} else {
+    show error_code(data)
+}"#;
+    // (input bytes, expected output): text, empty input, bad UTF-8 and NUL.
+    let cases: [(&[u8], &str); 4] = [
+        ("h\u{e9}llo\nworld\n".as_bytes(), "12\n"),
+        (b"", "0\n"),
+        (b"\xFF", "5\n"),
+        (b"a\0b", "6\n"),
+    ];
+    for optimization in LEVELS {
+        let case = Case::new();
+        let program = case.compile(source, optimization, DebugInfo::None);
+        for (input, expected) in cases {
+            let mut child = Command::new(&program)
+                .current_dir(&case.path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(input).unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success(), "{optimization:?}: {input:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                expected,
+                "{optimization:?}: {input:?}"
+            );
+        }
+    }
+}
