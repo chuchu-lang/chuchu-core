@@ -12,7 +12,7 @@ assign message as greet("world 🌍")
 show message
 reassign message as message + " Welcome."
 show message
-show len(message)
+show length(message)
 show message == "Hello, world 🌍! Welcome."
 ```
 
@@ -23,9 +23,10 @@ implicitly converted. Equality (`==`) and inequality (`!=`) compare contents,
 including UTF-8 bytes, rather than allocation addresses. Other arithmetic and
 ordering operators are rejected.
 
-`len` counts Unicode scalar values. For example, `len("é中🌍")` is 3. A combining
-mark counts separately: `len("é")` is 2, even though it can look like one
-character. No Unicode normalization is performed, so `"é"` and `"é"` differ.
+`length` counts Unicode scalar values. For example, `length("é中🌍")` is 3. A
+combining mark counts separately: `length("é")` is 2, even though it can look
+like one character. No Unicode normalization is performed, so `"é"` and `"é"`
+differ.
 Empty strings are supported and have length 0. String indexing, slicing,
 interpolation and string arrays are not implemented. Explicit numeric conversions
 are covered in [input and results](INPUT.md).

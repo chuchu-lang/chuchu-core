@@ -176,7 +176,7 @@ fn input_distinguishes_empty_lines_eof_and_partial_final_lines() {
     let case = Case::new();
     let source = r#"assign first as try_input()
 show is_ok(first)
-show len(unwrap(first))
+show length(unwrap(first))
 show unwrap(try_input())
 show unwrap(try_input())
 show is_eof(try_input())
@@ -224,7 +224,7 @@ fn rejected_input_is_drained_and_the_next_line_remains_available() {
     }
     succeeds(&run(&output, b"bad\0line\nvalid\n"), "6\nvalid\ntrue\n");
     let output = case.compile(
-        "show len(unwrap(try_input()))\nshow is_eof(try_input())",
+        "show length(unwrap(try_input()))\nshow is_eof(try_input())",
         Optimization::O2,
         DebugInfo::None,
     );
@@ -439,7 +439,7 @@ assign saved as first
 reassign first as input()
 show saved
 show first
-show len(input(""))
+show length(input(""))
 "#;
     for level in [
         Optimization::O0,

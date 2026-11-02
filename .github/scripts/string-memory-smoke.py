@@ -22,7 +22,7 @@ SOURCE = '''function make(value: string, n: int) be string {
     }
     return "fallback"
 }
-function consume(value: string) be int { return len(value) }
+function consume(value: string) be int { return length(value) }
 assign original as "hello"
 assign copy as original
 reassign original as original + original
@@ -32,7 +32,7 @@ assign i as 0
 while i < 2000 {
     assign temporary as make("value", 3)
     reassign temporary as temporary + "!"
-    assign size as len(temporary)
+    assign size as length(temporary)
     reassign i as i + 1
 }
 show i

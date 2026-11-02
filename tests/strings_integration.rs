@@ -102,7 +102,7 @@ fn strings_infer_types_and_support_function_annotations() {
 assign greeting as echo("hello")
 reassign greeting as greeting + "!"
 show greeting == "hello!"
-show len(greeting)"#;
+show length(greeting)"#;
     let statements = Parser::new(tokenize(source).unwrap())
         .parse_program()
         .unwrap();
@@ -173,11 +173,11 @@ assign saved as greeting
 reassign greeting as greeting + " again"
 show saved
 show greeting
-show len(name)
+show length(name)
 show "" + "empty"
-show len("")
-show len("é中🌍")
-show len("é")
+show length("")
+show length("é中🌍")
+show length("é")
 show "x" == "x"
 show "x" != "y"
 show "x" == "y"
@@ -239,7 +239,7 @@ fn returns_recursion_scopes_and_reassignment_keep_strings_alive() {
     }
     return "unreachable"
 }
-function consume(value: string) be int { return len(value) }
+function consume(value: string) be int { return length(value) }
 assign x as "a"
 assign y as x
 reassign x as "b"

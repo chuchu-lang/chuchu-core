@@ -209,21 +209,35 @@ fn linker_command_with_runtime(object: &Path, output: &Path, runtime: Option<&Pa
         command.args(["/nologo", "/MD"]).arg(object);
         if let Some(runtime) = runtime {
             // clang-cl otherwise writes its compiled C object into the current
-            // directory, colliding across concurrent compilations.
+            // directory, colliding across concurrent compilations. /Fo must name
+            // a directory (trailing separator) because clang-cl rejects a file
+            // path when compiling multiple sources.
+            let runtime_dir = runtime
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
             let mut runtime_object = OsString::from("/Fo");
-            runtime_object.push(runtime.with_extension("obj"));
+            runtime_object.push(runtime_dir);
+            runtime_object.push("/");
             command
                 .args(["/O2", "/std:c11"])
                 .arg(runtime_object)
                 .arg(runtime);
         }
-        command.arg(destination).args([
-            "/link",
-            "/MACHINE:X64",
-            "/SUBSYSTEM:CONSOLE",
-            "/DEFAULTLIB:msvcrt.lib",
-            "/DEFAULTLIB:legacy_stdio_definitions.lib",
-        ]);
+        // The driver derives `-out:` from /Fe and appends .exe when the name has
+        // no extension; a later /OUT: wins, preserving the exact output path.
+        let mut link_output = OsString::from("/OUT:");
+        link_output.push(output);
+        command
+            .arg(destination)
+            .arg("/link")
+            .arg(link_output)
+            .args([
+                "/MACHINE:X64",
+                "/SUBSYSTEM:CONSOLE",
+                "/DEFAULTLIB:msvcrt.lib",
+                "/DEFAULTLIB:legacy_stdio_definitions.lib",
+            ]);
         command
     }
     #[cfg(not(target_os = "windows"))]
@@ -515,9 +529,39 @@ mod tests {
             let link = args.iter().position(|arg| *arg == "/link").unwrap();
             assert!(source < link);
             assert!(args.contains(&std::ffi::OsStr::new("/std:c11")));
-            assert!(args.contains(&std::ffi::OsStr::new("/Foruntime with spaces.obj")));
+            assert!(args.contains(&std::ffi::OsStr::new("/Fo./")));
+
+            let nested = Path::new("build dir/runtime with spaces.c");
+            let command = linker_command_with_runtime(
+                Path::new("program.obj"),
+                Path::new("program.exe"),
+                Some(nested),
+            );
+            let args: Vec<_> = command.get_args().collect();
+            assert!(args.contains(&nested.as_os_str()));
+            assert!(args.contains(&std::ffi::OsStr::new("/Fobuild dir/")));
         }
         #[cfg(not(windows))]
         assert!(args.contains(&std::ffi::OsStr::new("-std=c11")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn linker_passes_exact_output_path_to_link() {
+        for output in ["program with spaces.exe", "exact-name"] {
+            let command = linker_command_with_runtime(
+                Path::new("program.obj"),
+                Path::new(output),
+                Some(Path::new("runtime.c")),
+            );
+            let args: Vec<_> = command.get_args().collect();
+            let link = args.iter().position(|arg| *arg == "/link").unwrap();
+            let expected = format!("/OUT:{output}");
+            let out = args
+                .iter()
+                .position(|arg| *arg == expected.as_str())
+                .unwrap();
+            assert!(link < out);
+        }
     }
 }
