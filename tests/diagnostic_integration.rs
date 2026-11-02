@@ -111,6 +111,25 @@ fn type_errors_include_the_source_and_actionable_guidance() {
 }
 
 #[test]
+fn calling_len_suggests_the_renamed_length_builtin() {
+    let source = "assign numbers as [1, 2, 3]\nshow len(numbers)";
+    let error = compile_source(source, Path::new("unused-diagnostic-output")).unwrap_err();
+    let diagnostic = render(&error, Path::new("case.chuchu"), source);
+    assert!(
+        diagnostic.contains("Function 'len': undefined function"),
+        "{diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("help: `len` was renamed to `length`. Did you mean `length`?"),
+        "{diagnostic}"
+    );
+    let source = "show missing(1)";
+    let error = compile_source(source, Path::new("unused-diagnostic-output")).unwrap_err();
+    let diagnostic = render(&error, Path::new("case.chuchu"), source);
+    assert!(!diagnostic.contains("length"), "{diagnostic}");
+}
+
+#[test]
 fn control_characters_are_printed_without_terminal_escape_sequences() {
     let source = "show \u{1b}";
     let error = CompileError::Lex(tokenize(source).unwrap_err());

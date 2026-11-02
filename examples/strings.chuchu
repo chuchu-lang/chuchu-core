@@ -5,7 +5,7 @@ function greet(name: string) be string {
 assign name as "دنیا 🌍"
 assign message as greet(name)
 show message
-show len(name)
+show length(name)
 show message == "Hello, دنیا 🌍!"
 reassign message as message + " Welcome to Chuchu."
 show message

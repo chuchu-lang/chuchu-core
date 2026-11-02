@@ -713,9 +713,9 @@ impl<'ctx> Generator<'ctx> {
             return self.result_builtin(name, &values, span);
         }
         match (name, values.as_slice()) {
-            ("len", [value]) if value.ty == Type::String => self.string_len(*value, span),
+            ("length", [value]) if value.ty == Type::String => self.string_len(*value, span),
             (
-                "len",
+                "length",
                 [
                     Value {
                         ty: Type::Array { len, .. },

@@ -1,3 +1,2 @@
 assign x as input("x = ")
-show "x = " 
 show x
