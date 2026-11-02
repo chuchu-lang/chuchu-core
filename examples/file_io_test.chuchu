@@ -1,0 +1,112 @@
+show "=== CHUCHU FILE I/O TEST ==="
+
+// Test 1: Write UTF-8 text to a file
+assign path as "target/chuchu-file-test.txt"
+assign text as "héllo 🌍\n"
+
+assign bytes as write_file(path, text)
+
+if bytes == 12 {
+    show "PASS: write_file"
+} else {
+    show "FAIL: write_file"
+}
+
+// Test 2: Read file contents
+assign content as read_file(path)
+
+if content == text {
+    show "PASS: read_file"
+} else {
+    show "FAIL: read_file"
+}
+
+// Test 3: Unicode character length
+if length(content) == 8 {
+    show "PASS: Unicode string length"
+} else {
+    show "FAIL: Unicode string length"
+}
+
+// Test 4: Overwrite an existing file
+assign updated as try_write_file(path, "OK")
+
+if is_ok(updated) {
+    if unwrap(updated) == 2 {
+        show "PASS: try_write_file"
+    } else {
+        show "FAIL: try_write_file byte count"
+    }
+} else {
+    show "FAIL: try_write_file"
+}
+
+// Test 5: Verify overwrite removed old contents
+if read_file(path) == "OK" {
+    show "PASS: File overwrite and truncation"
+} else {
+    show "FAIL: File overwrite and truncation"
+}
+
+// Test 6: Empty file
+assign empty_bytes as write_file("target/chuchu-empty.txt", "")
+
+if empty_bytes == 0 {
+    if read_file("target/chuchu-empty.txt") == "" {
+        show "PASS: Empty file"
+    } else {
+        show "FAIL: Empty file read"
+    }
+} else {
+    show "FAIL: Empty file write"
+}
+
+// Test 7: Missing file
+assign missing as try_read_file("target/chuchu-missing-test.txt")
+
+if error_code(missing) == 4 {
+    show "PASS: Missing file error handling"
+} else {
+    show "FAIL: Missing file error handling"
+}
+
+// Test 8: Invalid UTF-8
+assign invalid as try_read_file("target/chuchu-invalid-utf8.bin")
+
+if error_code(invalid) == 5 {
+    show "PASS: Invalid UTF-8 detection"
+} else {
+    show "FAIL: Invalid UTF-8 detection"
+}
+
+// Test 9: NUL byte
+assign nul as try_read_file("target/chuchu-nul.bin")
+
+if error_code(nul) == 6 {
+    show "PASS: NUL byte detection"
+} else {
+    show "FAIL: NUL byte detection"
+}
+
+// Test 10: Unicode filename
+assign unicode_bytes as write_file("target/chuchu-🌍.txt", "Unicode works")
+
+if read_file("target/chuchu-🌍.txt") == "Unicode works" {
+    show "PASS: Unicode filename"
+} else {
+    show "FAIL: Unicode filename"
+}
+
+// Test 11: Invalid destination directory
+assign failed_write as try_write_file(
+    "target/chuchu-missing-directory/output.txt",
+    "hello"
+)
+
+if error_code(failed_write) == 4 {
+    show "PASS: Write error handling"
+} else {
+    show "FAIL: Write error handling"
+}
+
+show "=== FILE I/O TEST FINISHED ==="
