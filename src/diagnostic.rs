@@ -231,6 +231,16 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 name,
                 message,
                 span,
+            } if name == "len" && *message == "undefined function" => (
+                *span,
+                format!("Function '{name}': {message}"),
+                "invalid function use or declaration".into(),
+                Some("`len` was renamed to `length`. Did you mean `length`?".into()),
+            ),
+            TypeError::InvalidFunction {
+                name,
+                message,
+                span,
             } => (
                 *span,
                 format!("Function '{name}': {message}"),

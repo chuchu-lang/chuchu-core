@@ -121,7 +121,7 @@ mod native {
                 Some("true\n"),
             ),
             (
-                "assign a as [1, 2, 3]\nassign b as a\nreassign a as [4, 5, 6]\nshow b[0]\nshow sum(a * b)\nshow len(a)",
+                "assign a as [1, 2, 3]\nassign b as a\nreassign a as [4, 5, 6]\nshow b[0]\nshow sum(a * b)\nshow length(a)",
                 Some("1\n32\n3\n"),
             ),
             (

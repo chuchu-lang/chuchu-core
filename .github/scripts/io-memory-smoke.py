@@ -18,7 +18,7 @@ SOURCE = '''function relay(value: result<string>) be result<string> {
 }
 assign first as try_input()
 show error_code(first)
-if is_ok(first) { show len(unwrap(first)) } else { show "recovered" }
+if is_ok(first) { show length(unwrap(first)) } else { show "recovered" }
 show unwrap(try_input())
 assign i as 0
 while i < 1000 {

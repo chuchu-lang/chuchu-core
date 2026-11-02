@@ -1,4 +1,4 @@
 assign numbers as [10, 20, 30, 40]
 show numbers[0]
 show numbers[2]
-show len(numbers)
+show length(numbers)

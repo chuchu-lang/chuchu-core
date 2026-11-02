@@ -89,7 +89,7 @@ fn assignment_without_to() {
 #[test]
 fn assignment_without_to_accepts_every_value_kind() {
     succeeds(
-        "function square(n: int) be int { return n * n }\nassign i as 7\nassign f as 2.5\nassign e as (i + 3) * 2\nassign c as square(4)\nassign a as [10, 20, 30]\nassign g as f * 2\nshow i\nshow f\nshow e\nshow c\nshow a[1] + len(a)\nshow g\nreassign c as square(5)\nreassign f as 0.5\nshow c\nshow f",
+        "function square(n: int) be int { return n * n }\nassign i as 7\nassign f as 2.5\nassign e as (i + 3) * 2\nassign c as square(4)\nassign a as [10, 20, 30]\nassign g as f * 2\nshow i\nshow f\nshow e\nshow c\nshow a[1] + length(a)\nshow g\nreassign c as square(5)\nreassign f as 0.5\nshow c\nshow f",
         "7\n2.5\n20\n16\n23\n5\n25\n0.5\n",
     );
 }
@@ -166,11 +166,11 @@ fn mutual_recursion_and_return_inside_loop() {
 #[test]
 fn integer_and_float_arrays() {
     succeeds(
-        "assign a as [10, 20, 30, 40]\nassign b as [1.5, 2.5, 3.5]\nshow a[0]\nshow a[2]\nshow b[1]\nshow len(a)\nshow sum(b)",
+        "assign a as [10, 20, 30, 40]\nassign b as [1.5, 2.5, 3.5]\nshow a[0]\nshow a[2]\nshow b[1]\nshow length(a)\nshow sum(b)",
         "10\n30\n2.5\n4\n7.5\n",
     );
     let maximum = format!(
-        "assign a as [{}]\nshow len(a)\nshow sum(a)",
+        "assign a as [{}]\nshow length(a)\nshow sum(a)",
         vec!["1"; 256].join(",")
     );
     succeeds(&maximum, "256\n256\n");
