@@ -1,0 +1,21 @@
+// Reads and writes UTF-8 text files. Files are created in the current directory.
+assign path as "chuchu-files-example.txt"
+
+assign written as write_file(path, "Hello from Chuchu 🌍\nSecond line")
+show "Wrote " + to_string(written) + " bytes"
+
+assign text as read_file(path)
+show "Read " + to_string(length(text)) + " characters:"
+show text
+
+assign replaced as write_file(path, "Replaced")
+show "Overwrote the file with " + to_string(replaced) + " bytes"
+show read_file(path)
+
+// try_read_file reports a failure as a value instead of stopping the program.
+assign missing as try_read_file("chuchu-files-example-missing.txt")
+if is_ok(missing) {
+    show "Unexpectedly found the missing file"
+} else {
+    show "Missing file: " + error_message(missing) + " (code " + to_string(error_code(missing)) + ")"
+}

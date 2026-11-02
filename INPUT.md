@@ -92,6 +92,9 @@ if is_ok(value) { show unwrap(value) }
 `err<T>(code)` requires an integer in 1–2147483647. An invalid code triggers a
 checked runtime failure. Codes 1–7 are reserved for the built-in meanings.
 
+The file functions `try_read_file` and `try_write_file` reuse codes 3–7 with the
+same messages; see [file I/O errors](FILES.md#errors).
+
 ## Line behavior
 
 Both `input` and `try_input` flush stdout before reading, so prompts are visible

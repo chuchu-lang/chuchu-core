@@ -36,6 +36,30 @@ Use `try_input()` when you want to handle those outcomes yourself as
 See [input, conversions, and results](INPUT.md), the [simple input example](examples/input.chuchu),
 and the [interactive temperature converter](examples/temperature.chuchu).
 
+Read and write UTF-8 text files with `read_file` and `write_file`:
+
+```chuchu
+assign bytes as write_file("notes.txt", "héllo 🌍")
+assign text as read_file("notes.txt")
+show text
+```
+
+Both stop the program with exit status 1 if the file cannot be read or written.
+`try_read_file` and `try_write_file` return a `result` instead, so the program
+can recover:
+
+```chuchu
+assign settings as try_read_file("settings.txt")
+if is_ok(settings) {
+    show unwrap(settings)
+} else {
+    show "Could not read settings.txt: " + error_message(settings)
+}
+```
+
+See [file I/O](FILES.md) for paths, error codes, ownership and limitations, and
+the [runnable example](examples/files.chuchu).
+
 ## Functions
 
 Use `be` before a function's return type:

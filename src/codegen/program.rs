@@ -700,6 +700,10 @@ impl<'ctx> Generator<'ctx> {
             name,
             "input"
                 | "try_input"
+                | "read_file"
+                | "try_read_file"
+                | "write_file"
+                | "try_write_file"
                 | "parse_int"
                 | "parse_float"
                 | "to_string"

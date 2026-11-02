@@ -67,6 +67,10 @@ pub fn reserved_function(name: &str) -> bool {
         name,
         "input"
             | "try_input"
+            | "read_file"
+            | "try_read_file"
+            | "write_file"
+            | "try_write_file"
             | "parse_int"
             | "parse_float"
             | "to_string"
@@ -96,6 +100,44 @@ pub fn reserved_function(name: &str) -> bool {
             | "memcpy"
             | "strcmp"
     ) || crate::runtime::FUNCTIONS.contains(&name)
+}
+
+/// Types a call to one of the file built-ins, or returns `None` for any other name.
+///
+/// | Call | Result |
+/// | --- | --- |
+/// | `read_file(path)` | `string` |
+/// | `try_read_file(path)` | `result<string>` |
+/// | `write_file(path, text)` | `int`, the number of bytes written |
+/// | `try_write_file(path, text)` | `result<int>`, the number of bytes written |
+///
+/// Every argument must be exactly `string`; there is no implicit conversion. The
+/// messages name the argument at fault because a path and the text to write are
+/// both strings and easy to swap or mistype.
+fn file_call(name: &str, arguments: &[Type]) -> Option<Result<Type, &'static str>> {
+    let (result, writes) = match name {
+        "read_file" => (Type::String, false),
+        "try_read_file" => (Type::Result(ScalarType::String), false),
+        "write_file" => (Type::Int, true),
+        "try_write_file" => (Type::Result(ScalarType::Int), true),
+        _ => return None,
+    };
+    if arguments.len() != if writes { 2 } else { 1 } {
+        return Some(Err(if writes {
+            "expected 2 arguments: the file path and the text to write"
+        } else {
+            "expected 1 argument: the file path"
+        }));
+    }
+    if arguments[0] != Type::String {
+        return Some(Err("the file path must be a string"));
+    }
+    if writes && arguments[1] != Type::String {
+        return Some(Err(
+            "the text to write must be a string; convert values with to_string(...) or extract a result with unwrap(...)",
+        ));
+    }
+    Some(Ok(result))
 }
 
 impl TypeChecker {
@@ -405,6 +447,13 @@ impl TypeChecker {
             .iter()
             .map(|expr| self.infer_expression(expr))
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(checked) = file_call(name, &types) {
+            return checked.map_err(|message| TypeError::InvalidFunction {
+                name: name.to_owned(),
+                message,
+                span,
+            });
+        }
         let invalid = || TypeError::InvalidFunction {
             name: name.to_owned(),
             message: "invalid argument count or types",
