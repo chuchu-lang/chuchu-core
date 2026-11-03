@@ -87,11 +87,19 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
-    /// An initializer sets a field the record does not have.
+    /// An initializer sets, or an access reads, a field the record does not have.
     UnknownField {
         record: String,
         field: String,
-        /// The field name in the initializer.
+        /// The field name in the initializer or after the dot.
+        span: Span,
+    },
+    /// A field was read from a value that is not a record.
+    FieldAccessOnNonRecord {
+        field: String,
+        /// The type of the value the field was read from.
+        actual: String,
+        /// The value before the dot.
         span: Span,
     },
     /// An initializer sets the same field twice.
@@ -477,8 +485,57 @@ impl TypeChecker {
             Type::Array { element, len } => {
                 format!("{}[{len}]", self.type_label(element.scalar()))
             }
-            Type::Record(id) => self.record_names[id.0].clone(),
+            Type::Record(id) => self
+                .record_names
+                .get(id.0)
+                .map_or_else(|| "record".into(), Clone::clone),
         }
+    }
+    /// The type of a declared field; a record-typed field resolves to that record.
+    fn field_type(&self, record: &str, field: &RecordField) -> Result<Type, TypeError> {
+        match &field.ty {
+            FieldType::Builtin(ty) => Ok(*ty),
+            FieldType::Named(type_name) => self
+                .record_ids
+                .get(type_name)
+                .map(|&id| Type::Record(id))
+                .ok_or_else(|| TypeError::UndefinedRecordType {
+                    record: record.to_owned(),
+                    type_name: type_name.clone(),
+                    span: type_name_span(field, type_name),
+                }),
+        }
+    }
+    /// Checks `object.field`: the object is a record that declares the field. The
+    /// result is the field's type, so chains such as `a.b.c` resolve one link at a time.
+    fn field_access(&self, object: &Expr, field: &str, span: Span) -> Result<Type, TypeError> {
+        let ty = self.infer_expression(object)?;
+        let declared = match ty {
+            Type::Record(id) => self
+                .record_names
+                .get(id.0)
+                .and_then(|name| Some((name, self.records.get(name)?))),
+            _ => None,
+        };
+        let Some((record, fields)) = declared else {
+            return Err(TypeError::FieldAccessOnNonRecord {
+                field: field.to_owned(),
+                actual: self.type_label(ty),
+                span: object.span,
+            });
+        };
+        let Some(declared_field) = fields.iter().find(|candidate| candidate.name == field) else {
+            return Err(TypeError::UnknownField {
+                record: record.clone(),
+                field: field.to_owned(),
+                // The span of an access ends with the field name.
+                span: Span {
+                    start: span.end - field.len(),
+                    end: span.end,
+                },
+            });
+        };
+        self.field_type(record, declared_field)
     }
     /// Checks `Name { field: value ... }`: the record exists, every field is set
     /// exactly once with a value of the declared type, and nothing else is set.
@@ -519,19 +576,7 @@ impl TypeChecker {
                 });
             }
             let actual = self.infer_expression(&init.value)?;
-            let expected = match &field.ty {
-                FieldType::Builtin(ty) => *ty,
-                FieldType::Named(type_name) => match self.record_ids.get(type_name) {
-                    Some(&id) => Type::Record(id),
-                    None => {
-                        return Err(TypeError::UndefinedRecordType {
-                            record: name.to_owned(),
-                            type_name: type_name.clone(),
-                            span: type_name_span(field, type_name),
-                        });
-                    }
-                },
-            };
+            let expected = self.field_type(name, field)?;
             if !expected.accepts(actual) {
                 return Err(TypeError::FieldMismatch {
                     detail: Box::new(FieldMismatch {
@@ -681,6 +726,7 @@ impl TypeChecker {
     pub fn infer_expression(&self, expr: &Expr) -> Result<Type, TypeError> {
         match &expr.kind {
             ExprKind::RecordInit { name, fields } => self.record_init(name, fields, expr.span),
+            ExprKind::FieldAccess { object, field } => self.field_access(object, field, expr.span),
             ExprKind::Integer(_) => Ok(Type::Int),
             ExprKind::Float(literal) => {
                 if literal.parse::<f64>().is_ok_and(f64::is_finite) {

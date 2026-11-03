@@ -195,6 +195,15 @@ impl fmt::Display for CompileError {
                     "Record {record:?} has no field {field:?} at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::FieldAccessOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Cannot read field {field:?} of a value of type {actual} at {}..{}",
+                    span.start, span.end
+                ),
                 TypeError::DuplicateInitializer {
                     record,
                     field,

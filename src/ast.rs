@@ -28,6 +28,12 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
     Identifier(String),
+    /// Reads a record field, written `object.field`. The span ends with the field
+    /// name, which is therefore the last `field.len()` bytes of it.
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+    },
     /// A record value written as `Name { field: expression ... }`.
     RecordInit {
         name: String,

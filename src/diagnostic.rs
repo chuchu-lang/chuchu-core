@@ -337,6 +337,12 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "this field is not declared in the record".into(),
                 Some(format!("Use one of the fields declared in 'record {record}'.")),
             ),
+            TypeError::FieldAccessOnNonRecord { field, actual, span } => (
+                *span,
+                format!("Cannot read field '{field}' of a value of type {actual}"),
+                format!("this has type {actual}, not a record"),
+                Some("Only record values have fields; check the name before the '.'.".into()),
+            ),
             TypeError::DuplicateInitializer { record, field, span } => (
                 *span,
                 format!("Field '{field}' of record '{record}' is set more than once"),

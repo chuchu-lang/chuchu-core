@@ -41,6 +41,8 @@ pub enum TokenKind {
     RightBracket,
     Comma,
     Colon,
+    /// Field access separator: `.`.
+    Dot,
 
     LeftBrace,
     RightBrace,

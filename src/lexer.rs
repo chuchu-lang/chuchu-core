@@ -248,6 +248,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
             ']' => TokenKind::RightBracket,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
+            // A `.` that follows digits is consumed by the number above, so this is
+            // only reached for field access.
+            '.' => TokenKind::Dot,
             '-' => TokenKind::Minus,
             '=' | '!' | '<' | '>' => {
                 let pair = characters.peek().is_some_and(|&(_, c)| c == '=');

@@ -479,11 +479,12 @@ impl Parser {
             },
             TokenKind::Identifier(name) => {
                 if self.at(&TokenKind::LeftBrace) && !self.in_condition {
-                    return self.record_init(name, token.span);
-                }
-                Expr {
-                    kind: ExprKind::Identifier(name),
-                    span: token.span,
+                    self.record_init(name, token.span)?
+                } else {
+                    Expr {
+                        kind: ExprKind::Identifier(name),
+                        span: token.span,
+                    }
                 }
             }
             TokenKind::Minus => {
@@ -552,6 +553,20 @@ impl Parser {
                     kind: ExprKind::Index {
                         array: Box::new(expression),
                         index: Box::new(index),
+                    },
+                    span,
+                };
+            } else if self.at(&TokenKind::Dot) {
+                self.advance();
+                let (field, field_span) = self.name()?;
+                let span = Span {
+                    start: expression.span.start,
+                    end: field_span.end,
+                };
+                expression = Expr {
+                    kind: ExprKind::FieldAccess {
+                        object: Box::new(expression),
+                        field,
                     },
                     span,
                 };

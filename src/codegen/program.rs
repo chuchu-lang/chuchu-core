@@ -429,7 +429,9 @@ impl<'ctx> Generator<'ctx> {
     fn expression_inner(&mut self, expr: &Expr) -> Result<Value<'ctx>, CodegenError> {
         let span = expr.span;
         match &expr.kind {
-            ExprKind::RecordInit { .. } => Err(invalid("Record values are unsupported", span)),
+            ExprKind::RecordInit { .. } | ExprKind::FieldAccess { .. } => {
+                Err(invalid("Record values are unsupported", span))
+            }
             ExprKind::Error { payload, code } => {
                 let code = self.expression(code)?.int(span)?;
                 self.error_result(*payload, code, span)
