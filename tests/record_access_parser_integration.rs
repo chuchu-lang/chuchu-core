@@ -457,18 +457,14 @@ fn rejects_malformed_access() {
 }
 
 #[test]
-fn field_mutation_is_not_syntax() {
-    // Only variables can be reassigned; `reassign s.x as 1` stops at the dot.
-    let source = "reassign s.x as 1";
-    assert_eq!(
-        parse(source),
-        Err(ParseError::ExpectedToken {
-            expected: "'as'",
-            span: span_of(source, ".", 0)
-        })
-    );
+fn only_reassign_can_write_a_field() {
+    // Step 6 made `reassign s.x as 1` a field assignment; reading syntax is
+    // unchanged, and nothing else can write to a field.
+    let statements = parse("reassign s.x as 1").unwrap();
+    assert!(matches!(statements[0].kind, StmtKind::AssignField { .. }));
     assert!(parse("assign s.x as 1").is_err());
     assert!(parse("s.x = 1").is_err());
+    assert!(parse("s.x as 1").is_err());
 }
 
 #[test]

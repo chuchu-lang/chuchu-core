@@ -69,6 +69,13 @@ impl fmt::Display for CompileError {
                     ParseError::UnexpectedEnd => {
                         return write!(f, "Unexpected end of token stream");
                     }
+                    ParseError::InvalidAssignmentTarget { span } => {
+                        return write!(
+                            f,
+                            "Invalid assignment target at {}..{}",
+                            span.start, span.end
+                        );
+                    }
                     ParseError::ExpectedExpression { span } => ("expression", span),
                     ParseError::ExpectedStatement { span } => ("statement", span),
                     ParseError::ExpectedIdentifier { span } => ("identifier", span),
@@ -202,6 +209,15 @@ impl fmt::Display for CompileError {
                 } => write!(
                     f,
                     "Cannot read field {field:?} of a value of type {actual} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::FieldAssignOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Cannot assign field {field:?} of a value of type {actual} at {}..{}",
                     span.start, span.end
                 ),
                 TypeError::DuplicateInitializer {

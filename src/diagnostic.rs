@@ -343,6 +343,12 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 format!("this has type {actual}, not a record"),
                 Some("Only record values have fields; check the name before the '.'.".into()),
             ),
+            TypeError::FieldAssignOnNonRecord { field, actual, span } => (
+                *span,
+                format!("Cannot assign field '{field}' of a value of type {actual}"),
+                format!("this has type {actual}, not a record"),
+                Some("Only record values have fields; check the name before the '.'.".into()),
+            ),
             TypeError::DuplicateInitializer { record, field, span } => (
                 *span,
                 format!("Field '{field}' of record '{record}' is set more than once"),
@@ -397,6 +403,7 @@ fn parse_diagnostic(error: &ParseError, source: &str) -> Diagnostic {
         | ParseError::ExpectedStatement { span }
         | ParseError::ExpectedIdentifier { span }
         | ParseError::ExpectedStatementSeparator { span }
+        | ParseError::InvalidAssignmentTarget { span }
         | ParseError::ExpectedToken { span, .. } => *span,
         ParseError::UnexpectedEnd => Span {
             start: source.len(),
@@ -458,6 +465,11 @@ fn parse_diagnostic(error: &ParseError, source: &str) -> Diagnostic {
             format!("Expected identifier, found {found}"),
             "expected a variable or parameter name".into(),
             Some("Names must begin with a letter or underscore, for example 'counter'.".into()),
+        ),
+        ParseError::InvalidAssignmentTarget { .. } => (
+            "Invalid assignment target".into(),
+            "only a variable, or a field of a variable, can be reassigned".into(),
+            Some("Assign to a variable or its field, such as 'reassign student.age as 25'.".into()),
         ),
         ParseError::ExpectedStatement { .. } => (
             format!("Expected statement, found {found}"),

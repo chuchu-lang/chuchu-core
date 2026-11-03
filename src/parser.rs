@@ -1,16 +1,32 @@
 use crate::ast::{
-    BinaryOperator, Expr, ExprKind, FieldInit, FieldType, Parameter, RecordField, Stmt, StmtKind,
+    BinaryOperator, Expr, ExprKind, FieldInit, FieldName, FieldTarget, FieldType, Parameter,
+    RecordField, Stmt, StmtKind,
 };
 use crate::token::{Span, Token, TokenKind};
 use crate::types::{ScalarType, Type};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
-    ExpectedExpression { span: Span },
-    ExpectedStatement { span: Span },
-    ExpectedIdentifier { span: Span },
-    ExpectedStatementSeparator { span: Span },
-    ExpectedToken { expected: &'static str, span: Span },
+    ExpectedExpression {
+        span: Span,
+    },
+    ExpectedStatement {
+        span: Span,
+    },
+    ExpectedIdentifier {
+        span: Span,
+    },
+    ExpectedStatementSeparator {
+        span: Span,
+    },
+    ExpectedToken {
+        expected: &'static str,
+        span: Span,
+    },
+    /// `reassign` was given a target that is not a variable or one of its fields.
+    InvalidAssignmentTarget {
+        span: Span,
+    },
     UnexpectedEnd,
 }
 
@@ -212,11 +228,31 @@ impl Parser {
             }
             TokenKind::Reassign => {
                 self.advance();
+                let target_start = self.position;
                 let (name, _) = self.name()?;
-                self.require(TokenKind::As, "'as'")?;
-                let value = self.parse_expression()?;
-                let end = value.span.end;
-                (StmtKind::Assign { name, value }, end)
+                // A name followed by `.`, `(`, `[`, or `{` begins a longer target.
+                let longer = matches!(
+                    self.current().map(|token| &token.kind),
+                    Some(
+                        TokenKind::Dot
+                            | TokenKind::LeftParen
+                            | TokenKind::LeftBracket
+                            | TokenKind::LeftBrace
+                    )
+                );
+                if longer {
+                    self.position = target_start;
+                    let target = self.field_target()?;
+                    self.require(TokenKind::As, "'as'")?;
+                    let value = self.parse_expression()?;
+                    let end = value.span.end;
+                    (StmtKind::AssignField { target, value }, end)
+                } else {
+                    self.require(TokenKind::As, "'as'")?;
+                    let value = self.parse_expression()?;
+                    let end = value.span.end;
+                    (StmtKind::Assign { name, value }, end)
+                }
             }
             TokenKind::Show | TokenKind::Return => {
                 self.advance();
@@ -310,6 +346,35 @@ impl Parser {
     }
     pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         self.binary(0)
+    }
+    /// Parses a target longer than a name, as an expression, then keeps it only if
+    /// it is `variable.field...`. Otherwise the error points at the part that is
+    /// not a variable: the call, index, or record initializer the chain starts from.
+    fn field_target(&mut self) -> Result<FieldTarget, ParseError> {
+        let expression = self.atom()?;
+        let mut fields = Vec::new();
+        let mut root = &expression;
+        while let ExprKind::FieldAccess { object, field } = &root.kind {
+            fields.push(FieldName {
+                name: field.clone(),
+                // An access ends with its field name.
+                span: Span {
+                    start: root.span.end - field.len(),
+                    end: root.span.end,
+                },
+            });
+            root = object;
+        }
+        fields.reverse();
+        match &root.kind {
+            ExprKind::Identifier(variable) if !fields.is_empty() => Ok(FieldTarget {
+                variable: variable.clone(),
+                variable_span: root.span,
+                fields,
+                span: expression.span,
+            }),
+            _ => Err(ParseError::InvalidAssignmentTarget { span: root.span }),
+        }
     }
     /// Parses an `if` or `while` condition, where `name {` must open the body.
     fn condition(&mut self) -> Result<Expr, ParseError> {

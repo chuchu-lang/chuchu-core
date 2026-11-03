@@ -106,6 +106,27 @@ pub struct RecordField {
     pub span: Span,
 }
 
+/// One `.field` of a [`FieldTarget`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldName {
+    pub name: String,
+    /// Covers only the field name, not the dot.
+    pub span: Span,
+}
+
+/// The place written by `reassign variable.field...`: a field of a record
+/// variable, possibly nested. Only this shape can be a target, so a call result or
+/// a temporary record cannot be represented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldTarget {
+    pub variable: String,
+    pub variable_span: Span,
+    /// The fields from the variable outward; never empty.
+    pub fields: Vec<FieldName>,
+    /// Covers the variable through the last field.
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
@@ -122,6 +143,11 @@ pub enum StmtKind {
     Show(Expr),
     Assign {
         name: String,
+        value: Expr,
+    },
+    /// Replaces a record field using `reassign variable.field as value`.
+    AssignField {
+        target: FieldTarget,
         value: Expr,
     },
     If {

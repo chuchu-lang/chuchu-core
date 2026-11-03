@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOperator, Expr, ExprKind, FieldInit, FieldType, RecordField, Stmt, StmtKind,
+    BinaryOperator, Expr, ExprKind, FieldInit, FieldTarget, FieldType, RecordField, Stmt, StmtKind,
 };
 use crate::symbol_table::{SymbolError, SymbolTable};
 use crate::token::Span;
@@ -100,6 +100,14 @@ pub enum TypeError {
         /// The type of the value the field was read from.
         actual: String,
         /// The value before the dot.
+        span: Span,
+    },
+    /// A field was assigned on a value that is not a record.
+    FieldAssignOnNonRecord {
+        field: String,
+        /// The type of the value the field was assigned on.
+        actual: String,
+        /// The target before the dot.
         span: Span,
     },
     /// An initializer sets the same field twice.
@@ -510,6 +518,25 @@ impl TypeChecker {
     /// result is the field's type, so chains such as `a.b.c` resolve one link at a time.
     fn field_access(&self, object: &Expr, field: &str, span: Span) -> Result<Type, TypeError> {
         let ty = self.infer_expression(object)?;
+        // The span of an access ends with the field name.
+        let field_span = Span {
+            start: span.end - field.len(),
+            end: span.end,
+        };
+        self.field_of(ty, field, object.span, field_span, false)
+            .map(|(_, field_ty)| field_ty)
+    }
+    /// Looks up `field` on a value of type `ty`, returning the record that declares
+    /// it and the field's type. Reading and writing share this, so they accept
+    /// exactly the same fields; `write` only changes how a non-record is described.
+    fn field_of(
+        &self,
+        ty: Type,
+        field: &str,
+        object_span: Span,
+        field_span: Span,
+        write: bool,
+    ) -> Result<(&str, Type), TypeError> {
         let declared = match ty {
             Type::Record(id) => self
                 .record_names
@@ -518,24 +545,65 @@ impl TypeChecker {
             _ => None,
         };
         let Some((record, fields)) = declared else {
-            return Err(TypeError::FieldAccessOnNonRecord {
-                field: field.to_owned(),
-                actual: self.type_label(ty),
-                span: object.span,
+            let (field, actual, span) = (field.to_owned(), self.type_label(ty), object_span);
+            return Err(if write {
+                TypeError::FieldAssignOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                }
+            } else {
+                TypeError::FieldAccessOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                }
             });
         };
         let Some(declared_field) = fields.iter().find(|candidate| candidate.name == field) else {
             return Err(TypeError::UnknownField {
                 record: record.clone(),
                 field: field.to_owned(),
-                // The span of an access ends with the field name.
-                span: Span {
-                    start: span.end - field.len(),
-                    end: span.end,
-                },
+                span: field_span,
             });
         };
-        self.field_type(record, declared_field)
+        Ok((record, self.field_type(record, declared_field)?))
+    }
+    /// Checks `reassign variable.field... as value`: the variable exists, each field
+    /// is declared by the record before it, and the value fits the last field.
+    fn assign_field(&self, target: &FieldTarget, value: &Expr) -> Result<(), TypeError> {
+        let mut ty =
+            self.symbols
+                .lookup(&target.variable)
+                .ok_or_else(|| TypeError::UndefinedVariable {
+                    name: target.variable.clone(),
+                    span: target.variable_span,
+                })?;
+        let mut owner = "";
+        let mut object_span = target.variable_span;
+        for field in &target.fields {
+            (owner, ty) = self.field_of(ty, &field.name, object_span, field.span, true)?;
+            object_span = Span {
+                start: target.span.start,
+                end: field.span.end,
+            };
+        }
+        let actual = self.infer_expression(value)?;
+        if ty.accepts(actual) {
+            return Ok(());
+        }
+        Err(match target.fields.last() {
+            Some(last) => TypeError::FieldMismatch {
+                detail: Box::new(FieldMismatch {
+                    record: owner.to_owned(),
+                    field: last.name.clone(),
+                    expected: self.type_label(ty),
+                    actual: self.type_label(actual),
+                }),
+                span: value.span,
+            },
+            None => self.mismatch_error(ty, actual, value.span),
+        })
     }
     /// Checks `Name { field: value ... }`: the record exists, every field is set
     /// exactly once with a value of the declared type, and nothing else is set.
@@ -628,6 +696,7 @@ impl TypeChecker {
                     })?;
                 self.mismatch(ty, value)
             }
+            StmtKind::AssignField { target, value } => self.assign_field(target, value),
             StmtKind::Show(expr) => {
                 let ty = self.infer_expression(expr)?;
                 if matches!(ty, Type::Result(_)) {
