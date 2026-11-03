@@ -28,6 +28,14 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
     Identifier(String),
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
+    },
+    RecordInit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
     Binary {
         left: Box<Expr>,
         operator: BinaryOperator,
@@ -71,6 +79,13 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldDef {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
@@ -87,6 +102,15 @@ pub enum StmtKind {
     Assign {
         name: String,
         value: Expr,
+    },
+    AssignField {
+        target: Box<Expr>,
+        field: String,
+        value: Expr,
+    },
+    Record {
+        name: String,
+        fields: Vec<RecordFieldDef>,
     },
     If {
         condition: Expr,
