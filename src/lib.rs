@@ -6,6 +6,7 @@ pub mod lexer;
 pub mod native;
 pub mod optimization;
 pub mod parser;
+pub mod records;
 pub mod runtime;
 pub mod source;
 pub mod symbol_table;

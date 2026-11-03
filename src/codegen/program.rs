@@ -18,7 +18,9 @@ mod debug;
 mod results;
 mod runtime;
 mod strings;
+use super::records::RecordLayouts;
 use crate::ast::{BinaryOperator as Op, Expr, ExprKind, Stmt, StmtKind};
+use crate::records::RecordTable;
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, ScalarType, Type};
 
@@ -71,6 +73,8 @@ struct Generator<'ctx> {
     builder: Builder<'ctx>,
     scopes: Vec<HashMap<String, Binding<'ctx>>>,
     functions: HashMap<String, Function<'ctx>>,
+    /// The layout of every declared record; empty for a program without records.
+    records: RecordLayouts<'ctx>,
     result: Type,
 }
 
@@ -92,6 +96,23 @@ pub(super) fn generate_with_options<'ctx>(
     source: Option<&crate::source::SourceFile>,
     options: &crate::optimization::BuildOptions,
 ) -> Result<Module<'ctx>, CodegenError> {
+    generate_with_records(
+        context,
+        statements,
+        &RecordTable::default(),
+        source,
+        options,
+    )
+}
+
+pub(super) fn generate_with_records<'ctx>(
+    context: &'ctx Context,
+    statements: &[Stmt],
+    record_table: &RecordTable,
+    source: Option<&crate::source::SourceFile>,
+    options: &crate::optimization::BuildOptions,
+) -> Result<Module<'ctx>, CodegenError> {
+    let records = RecordLayouts::new(context, record_table)?;
     let module = context.create_module("cheeku");
     let debug = if options.debug_info == crate::optimization::DebugInfo::Full {
         Some(debug::DebugState::new(
@@ -113,6 +134,7 @@ pub(super) fn generate_with_options<'ctx>(
         builder: context.create_builder(),
         scopes: vec![HashMap::new()],
         functions: HashMap::new(),
+        records,
         result: Type::Int,
     };
     for statement in statements {
@@ -227,14 +249,25 @@ pub(super) fn generate_with_options<'ctx>(
     if let Some(debug) = &mut generator.debug {
         let span = statements
             .iter()
-            .find(|s| !matches!(s.kind, StmtKind::Function { .. }))
+            .find(|s| !matches!(s.kind, StmtKind::Function { .. } | StmtKind::Record { .. }))
             .map(|s| s.span)
             .unwrap_or(Span { start: 0, end: 0 });
         debug.function(main, "main", span, None, &[])?;
     }
     for statement in statements {
-        if !matches!(statement.kind, StmtKind::Function { .. }) {
-            generator.statement(statement)?;
+        match &statement.kind {
+            StmtKind::Function { .. } => {}
+            // A declaration is a type, not an action: its layout was built above
+            // from the validated table, and it generates no code of its own.
+            StmtKind::Record { name, .. } => {
+                if generator.records.by_name(name).is_none() {
+                    return Err(invalid(
+                        "Record declaration has no validated layout",
+                        statement.span,
+                    ));
+                }
+            }
+            _ => generator.statement(statement)?,
         }
     }
     if !generator.terminated() {
@@ -280,7 +313,12 @@ impl<'ctx> Generator<'ctx> {
                     false,
                 )
                 .into(),
-            Type::Record(_) => return Err(invalid("Record values are unsupported", span)),
+            Type::Record(id) => self
+                .records
+                .get(id)
+                .ok_or(invalid("Record type has no layout", span))?
+                .struct_type()
+                .into(),
             Type::Array { element, len } => {
                 if len == 0 || len > MAX_ARRAY_LEN {
                     return Err(invalid("Array length outside 1..=256", span));

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use inkwell::context::Context;
 
-use crate::codegen::{CodegenError, generate_program_with_options};
+use crate::codegen::{CodegenError, generate_program_with_records};
 use crate::lexer::{LexError, tokenize};
 use crate::native::{NativeError, NativeTimings, build_executable_with_options};
 use crate::optimization::BuildOptions;
@@ -409,13 +409,15 @@ fn compile_input(
         .map_err(CompileError::Parse)?;
     let parse = start.elapsed();
     let start = Instant::now();
-    TypeChecker::new(SymbolTable::new())
+    let mut checker = TypeChecker::new(SymbolTable::new());
+    checker
         .check_program(&statements)
         .map_err(CompileError::Type)?;
+    let records = checker.record_table().unwrap_or_default();
     let type_check = start.elapsed();
     let start = Instant::now();
     let context = Context::create();
-    let module = generate_program_with_options(&context, &statements, named, options)
+    let module = generate_program_with_records(&context, &statements, &records, named, options)
         .map_err(CompileError::Codegen)?;
     let llvm_generation = start.elapsed();
     let native =

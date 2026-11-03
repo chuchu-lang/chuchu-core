@@ -1,6 +1,7 @@
 use crate::ast::{
     BinaryOperator, Expr, ExprKind, FieldInit, FieldTarget, FieldType, RecordField, Stmt, StmtKind,
 };
+use crate::records::{FieldInfo, RecordInfo, RecordTable};
 use crate::symbol_table::{SymbolError, SymbolTable};
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, RecordId, ScalarType, Type};
@@ -164,6 +165,10 @@ pub struct TypeChecker {
     record_ids: HashMap<String, RecordId>,
     /// Record names in declaration order, to name a `Type::Record`.
     record_names: Vec<String>,
+    /// The declaration span of each record, parallel to `record_names`.
+    record_spans: Vec<Span>,
+    /// Whether the last `check_program` got through record validation.
+    records_validated: bool,
     /// The first valid top-level record, reported once the whole program checks.
     unsupported_record: Option<TypeError>,
     result: Option<Type>,
@@ -268,6 +273,8 @@ impl TypeChecker {
             records: HashMap::new(),
             record_ids: HashMap::new(),
             record_names: Vec::new(),
+            record_spans: Vec::new(),
+            records_validated: false,
             unsupported_record: None,
             result: None,
             depth: 0,
@@ -302,8 +309,10 @@ impl TypeChecker {
         // Record declarations are validated before any statement is checked, so a
         // malformed declaration is reported ahead of the "not supported yet" error.
         self.unsupported_record = None;
+        self.records_validated = false;
         self.validate_records(statements, true)?;
         self.resolve_record_types(statements)?;
+        self.records_validated = true;
         for stmt in statements {
             // The first valid declaration is reported only after every statement has
             // been checked, so a bad initializer after it is not hidden.
@@ -318,6 +327,37 @@ impl TypeChecker {
             self.check_statement(stmt)?;
         }
         self.unsupported_record.take().map_or(Ok(()), Err)
+    }
+    /// The validated records of the last `check_program`, resolved and in
+    /// declaration order, for code generation. `None` until record validation has
+    /// succeeded, so a half-validated registry is never handed on. A program
+    /// without records gives an empty table.
+    pub fn record_table(&self) -> Option<RecordTable> {
+        if !self.records_validated {
+            return None;
+        }
+        let mut records = Vec::with_capacity(self.record_names.len());
+        for (name, &span) in self.record_names.iter().zip(&self.record_spans) {
+            let fields = self
+                .records
+                .get(name)?
+                .iter()
+                .map(|field| {
+                    Ok(FieldInfo {
+                        name: field.name.clone(),
+                        ty: self.field_type(name, field)?,
+                        span: field.span,
+                    })
+                })
+                .collect::<Result<Vec<_>, TypeError>>()
+                .ok()?;
+            records.push(RecordInfo {
+                name: name.clone(),
+                fields,
+                span,
+            });
+        }
+        Some(RecordTable::new(records))
     }
     /// Checks record declarations in source order, including those nested inside
     /// functions and blocks: each must be top-level, uniquely named, and have
@@ -347,6 +387,7 @@ impl TypeChecker {
                     self.record_ids
                         .insert(name.clone(), RecordId(self.record_names.len()));
                     self.record_names.push(name.clone());
+                    self.record_spans.push(stmt.span);
                     self.records.insert(name.clone(), fields.clone());
                     let mut seen = HashSet::new();
                     for field in fields {
