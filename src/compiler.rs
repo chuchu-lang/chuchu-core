@@ -141,6 +141,25 @@ impl fmt::Display for CompileError {
                     "Record {name:?} is declared but records are not supported yet at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::DuplicateRecord { name, span } => write!(
+                    f,
+                    "Duplicate record declaration {name:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::DuplicateField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Duplicate field {field:?} in record {record:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::RecordNotTopLevel { name, span } => write!(
+                    f,
+                    "Record {name:?} must be declared at the top level at {}..{}",
+                    span.start, span.end
+                ),
             },
             Self::Codegen(error) => error.fmt(f),
             Self::Native(error) => error.fmt(f),

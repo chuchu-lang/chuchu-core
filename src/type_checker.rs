@@ -2,7 +2,7 @@ use crate::ast::{BinaryOperator, Expr, ExprKind, Stmt, StmtKind};
 use crate::symbol_table::{SymbolError, SymbolTable};
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, ScalarType, Type};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeError {
@@ -51,6 +51,19 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    DuplicateRecord {
+        name: String,
+        span: Span,
+    },
+    DuplicateField {
+        record: String,
+        field: String,
+        span: Span,
+    },
+    RecordNotTopLevel {
+        name: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +75,7 @@ pub struct FunctionSignature {
 pub struct TypeChecker {
     symbols: SymbolTable,
     functions: HashMap<String, FunctionSignature>,
+    records: HashSet<String>,
     result: Option<Type>,
     depth: usize,
 }
@@ -149,6 +163,7 @@ impl TypeChecker {
         Self {
             symbols,
             functions: HashMap::new(),
+            records: HashSet::new(),
             result: None,
             depth: 0,
         }
@@ -179,8 +194,57 @@ impl TypeChecker {
                 );
             }
         }
+        // Record declarations are validated before any statement is checked, so a
+        // malformed declaration is reported ahead of the "not supported yet" error.
+        self.validate_records(statements, true)?;
         for stmt in statements {
             self.check_statement(stmt)?;
+        }
+        Ok(())
+    }
+    /// Checks record declarations in source order, including those nested inside
+    /// functions and blocks: each must be top-level, uniquely named, and have
+    /// uniquely named fields.
+    fn validate_records(&mut self, statements: &[Stmt], top_level: bool) -> Result<(), TypeError> {
+        for stmt in statements {
+            match &stmt.kind {
+                StmtKind::Record { name, fields } => {
+                    if !top_level {
+                        return Err(TypeError::RecordNotTopLevel {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    if !self.records.insert(name.clone()) {
+                        return Err(TypeError::DuplicateRecord {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    let mut seen = HashSet::new();
+                    for field in fields {
+                        if !seen.insert(field.name.as_str()) {
+                            return Err(TypeError::DuplicateField {
+                                record: name.clone(),
+                                field: field.name.clone(),
+                                span: field.span,
+                            });
+                        }
+                    }
+                }
+                StmtKind::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    self.validate_records(then_body, false)?;
+                    self.validate_records(else_body, false)?;
+                }
+                StmtKind::While { body, .. } | StmtKind::Function { body, .. } => {
+                    self.validate_records(body, false)?;
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -273,6 +337,12 @@ impl TypeChecker {
                     .result
                     .ok_or(TypeError::InvalidReturn { span: stmt.span })?;
                 self.mismatch(ty, expr)
+            }
+            StmtKind::Record { name, .. } if self.depth != 0 || self.result.is_some() => {
+                Err(TypeError::RecordNotTopLevel {
+                    name: name.clone(),
+                    span: stmt.span,
+                })
             }
             StmtKind::Record { name, .. } => Err(TypeError::UnsupportedRecord {
                 name: name.clone(),

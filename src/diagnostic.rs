@@ -277,6 +277,28 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "record declarations are parsed but not supported".into(),
                 Some("Records are still under development; remove the declaration for now.".into()),
             ),
+            TypeError::DuplicateRecord { name, span } => (
+                *span,
+                format!("Record '{name}' is already declared"),
+                "duplicate record declaration".into(),
+                Some("Rename this record or remove the earlier declaration.".into()),
+            ),
+            TypeError::DuplicateField {
+                record,
+                field,
+                span,
+            } => (
+                *span,
+                format!("Duplicate field '{field}' in record '{record}'"),
+                "this field name is already used in the record".into(),
+                Some("Give each field in a record a different name.".into()),
+            ),
+            TypeError::RecordNotTopLevel { name, span } => (
+                *span,
+                format!("Record '{name}' must be declared at the top level"),
+                "records cannot be declared inside functions or blocks".into(),
+                Some("Move the record declaration outside every function, if, and while block.".into()),
+            ),
         },
         _ => return None,
     };
