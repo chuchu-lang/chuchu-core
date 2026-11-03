@@ -448,11 +448,12 @@ fn earlier_record_validation_still_applies_with_access_present() {
 #[test]
 fn a_record_that_is_never_accessed_is_unaffected() {
     assert_eq!(check_body("show 1"), unsupported());
+    assert_eq!(check("record A {\n    x: int\n}"), Ok(()));
     assert_eq!(
-        check("record A {\n    x: int\n}"),
+        check("record A {\n    x: string\n}"),
         Err(TypeError::UnsupportedRecord {
             name: "A".into(),
-            span: Span { start: 0, end: 23 },
+            span: Span { start: 0, end: 26 },
         })
     );
     // Programs without records behave as before, including floats with dots.

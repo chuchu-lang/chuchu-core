@@ -17,6 +17,8 @@ pub(super) struct DebugState<'ctx> {
     source: SourceFile,
     scopes: Vec<DIScope<'ctx>>,
     types: Vec<(Type, DIType<'ctx>)>,
+    /// Record names and fields, by `RecordId`, to describe record-typed locals.
+    records: Vec<(String, Vec<(String, Type)>)>,
     data: TargetData,
     optimized: bool,
 }
@@ -27,6 +29,7 @@ impl<'ctx> DebugState<'ctx> {
         module: &Module<'ctx>,
         source: &SourceFile,
         options: &BuildOptions,
+        records: &RecordLayouts<'ctx>,
     ) -> Result<Self, CodegenError> {
         let machine = crate::optimization::target_machine(module, options)
             .map_err(|error| CodegenError::Verification(error.to_string()))?;
@@ -86,6 +89,19 @@ impl<'ctx> DebugState<'ctx> {
             source: source.clone(),
             scopes: Vec::new(),
             types: Vec::new(),
+            records: records
+                .iter()
+                .map(|layout| {
+                    (
+                        layout.name().to_owned(),
+                        layout
+                            .fields()
+                            .iter()
+                            .map(|field| (field.name.clone(), field.ty))
+                            .collect(),
+                    )
+                })
+                .collect(),
             data: machine.get_target_data(),
             optimized,
         })
@@ -148,6 +164,60 @@ impl<'ctx> DebugState<'ctx> {
                     .create_struct_type(
                         scope,
                         &format!("result<{:?}>", payload),
+                        self.unit.get_file(),
+                        0,
+                        bits,
+                        self.data.get_abi_alignment(&llvm) * 8,
+                        DIFlags::ZERO,
+                        None,
+                        &members,
+                        0,
+                        None,
+                        "",
+                    )
+                    .as_type()
+            }
+            Type::Record(id) => {
+                let none = Span { start: 0, end: 0 };
+                let (name, fields) = self
+                    .records
+                    .get(id.0)
+                    .cloned()
+                    .ok_or(invalid("Record type has no debug description", none))?;
+                let BasicTypeEnum::StructType(structure) = llvm else {
+                    return Err(invalid("Expected record LLVM type", none));
+                };
+                let element_types = structure.get_field_types();
+                let scope = self.unit.as_debug_info_scope();
+                let mut members = Vec::new();
+                for (index, (field_name, field_type)) in fields.iter().enumerate() {
+                    let element = *element_types
+                        .get(index)
+                        .ok_or(invalid("Invalid record layout", none))?;
+                    let member_type = self.ty(*field_type, element)?;
+                    members.push(
+                        self.builder
+                            .create_member_type(
+                                scope,
+                                field_name,
+                                self.unit.get_file(),
+                                0,
+                                self.data.get_abi_size(&element) * 8,
+                                self.data.get_abi_alignment(&element) * 8,
+                                self.data
+                                    .offset_of_element(&structure, index as u32)
+                                    .ok_or(invalid("Invalid record layout", none))?
+                                    * 8,
+                                DIFlags::ZERO,
+                                member_type,
+                            )
+                            .as_type(),
+                    );
+                }
+                self.builder
+                    .create_struct_type(
+                        scope,
+                        &name,
                         self.unit.get_file(),
                         0,
                         bits,

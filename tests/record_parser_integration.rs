@@ -194,21 +194,27 @@ fn record_is_not_valid_where_an_expression_is_expected() {
 }
 
 #[test]
-fn declarations_are_rejected_before_code_generation() {
-    let statements = parse("record P {\n    x: int\n}").unwrap();
+fn declarations_with_unsupported_fields_are_rejected_before_code_generation() {
+    let statements = parse("record P {\n    s: string\n}").unwrap();
     assert_eq!(
         TypeChecker::new(SymbolTable::new()).check_program(&statements),
         Err(TypeError::UnsupportedRecord {
             name: "P".into(),
-            span: Span { start: 0, end: 23 },
+            span: Span { start: 0, end: 26 },
         })
     );
     // Even when it follows valid statements, so a program is never half-compiled.
-    let statements = parse("show 1\nrecord P {\n    x: int\n}").unwrap();
+    let statements = parse("show 1\nrecord P {\n    s: string\n}").unwrap();
     assert!(matches!(
         TypeChecker::new(SymbolTable::new()).check_program(&statements),
         Err(TypeError::UnsupportedRecord { .. })
     ));
+    // A declaration whose fields are all int, float, or bool is compilable.
+    let statements = parse("record P {\n    x: int\n}").unwrap();
+    assert_eq!(
+        TypeChecker::new(SymbolTable::new()).check_program(&statements),
+        Ok(())
+    );
 }
 
 #[test]

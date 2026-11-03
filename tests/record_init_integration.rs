@@ -85,23 +85,15 @@ fn valid_initializers_are_still_reported_as_unsupported() {
     }
     // Field values are arbitrary expressions of the right type.
     let source = "record P {\n    x: int\n    y: int\n}\nassign a as 1\nassign p as P {\n    x: a + 2 * 3\n    y: -a\n}";
-    assert_eq!(
-        check(source),
-        unsupported(
-            "P",
-            span_of(source, "record P {\n    x: int\n    y: int\n}", 0)
-        )
-    );
+    // `P` has only int fields, so the whole program compiles.
+    assert_eq!(check(source), Ok(()));
 }
 
 #[test]
 fn an_int_value_widens_to_a_float_field_but_not_the_reverse() {
     let declaration = "record M {\n    f: float\n    i: int\n}\n";
     let ok = format!("{declaration}assign m as M {{\n    f: 1\n    i: 2\n}}");
-    assert_eq!(
-        check(&ok),
-        unsupported("M", span_of(&ok, declaration.trim_end(), 0))
-    );
+    assert_eq!(check(&ok), Ok(()));
     let bad = format!("{declaration}assign m as M {{\n    f: 1.5\n    i: 2.5\n}}");
     assert_eq!(
         check(&bad),
@@ -318,12 +310,12 @@ fn initializer_errors_after_a_declaration_are_not_hidden() {
         check(&source),
         Err(TypeError::UndefinedVariable { .. })
     ));
-    // With every statement valid, the first declaration is the one reported.
-    let source =
-        "record A {\n    x: int\n}\nrecord B {\n    y: int\n}\nassign a as A {\n    x: 1\n}";
+    // With every statement valid, the first unsupported declaration is the one
+    // reported.
+    let source = "record A {\n    s: string\n}\nrecord B {\n    s: string\n}\nassign a as A {\n    s: \"x\"\n}";
     assert_eq!(
         check(source),
-        unsupported("A", span_of(source, "record A {\n    x: int\n}", 0))
+        unsupported("A", span_of(source, "record A {\n    s: string\n}", 0))
     );
 }
 
@@ -430,10 +422,7 @@ fn initializers_inside_functions_and_blocks_are_validated() {
     let ok = format!(
         "{record}function f() be int {{\n    assign p as P {{\n        x: 1\n    }}\n    return 1\n}}"
     );
-    assert!(matches!(
-        check(&ok),
-        Err(TypeError::UnsupportedRecord { .. })
-    ));
+    assert_eq!(check(&ok), Ok(()));
 }
 
 #[test]

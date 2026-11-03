@@ -544,8 +544,9 @@ fn earlier_record_validation_still_applies_with_mutation_present() {
         );
     }
     // Declarations alone, and reading fields, still end as unsupported.
+    assert_eq!(check("record A {\n    x: int\n}"), Ok(()));
     assert!(matches!(
-        check("record A {\n    x: int\n}"),
+        check("record A {\n    x: string\n}"),
         Err(TypeError::UnsupportedRecord { .. })
     ));
     assert_eq!(check_body("show student.name"), unsupported());

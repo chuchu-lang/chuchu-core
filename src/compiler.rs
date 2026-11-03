@@ -145,7 +145,12 @@ impl fmt::Display for CompileError {
                 ),
                 TypeError::UnsupportedRecord { name, span } => write!(
                     f,
-                    "Record {name:?} is declared but records are not supported yet at {}..{}",
+                    "Record {name:?} has fields that are not supported yet at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::UnsupportedRecordUse { feature, span } => write!(
+                    f,
+                    "Records do not support {feature} yet at {}..{}",
                     span.start, span.end
                 ),
                 TypeError::DuplicateRecord { name, span } => write!(

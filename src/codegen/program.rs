@@ -15,6 +15,7 @@ use super::CodegenError;
 
 mod arrays;
 mod debug;
+mod record_values;
 mod results;
 mod runtime;
 mod strings;
@@ -123,6 +124,7 @@ pub(super) fn generate_with_records<'ctx>(
                 Span { start: 0, end: 0 },
             ))?,
             options,
+            &records,
         )?)
     } else {
         None
@@ -467,9 +469,8 @@ impl<'ctx> Generator<'ctx> {
     fn expression_inner(&mut self, expr: &Expr) -> Result<Value<'ctx>, CodegenError> {
         let span = expr.span;
         match &expr.kind {
-            ExprKind::RecordInit { .. } | ExprKind::FieldAccess { .. } => {
-                Err(invalid("Record values are unsupported", span))
-            }
+            ExprKind::RecordInit { name, fields } => self.record_init(name, fields, span),
+            ExprKind::FieldAccess { object, field } => self.field_access(object, field, span),
             ExprKind::Error { payload, code } => {
                 let code = self.expression(code)?.int(span)?;
                 self.error_result(*payload, code, span)
@@ -939,11 +940,20 @@ impl<'ctx> Generator<'ctx> {
                         span,
                     });
                 }
+                // A record variable is created from an initializer; copying one is
+                // not supported yet, so a record value from anything else is refused.
+                let initializer = matches!(value.kind, ExprKind::RecordInit { .. });
                 let value = self.expression(value)?;
+                if matches!(value.ty, Type::Record(_)) && !initializer {
+                    return Err(invalid("Record copying is unsupported", span));
+                }
                 self.declare(name, value, span, None)
             }
             StmtKind::Assign { name, value } => {
                 let binding = self.lookup(name, span)?;
+                if matches!(binding.ty, Type::Record(_)) {
+                    return Err(invalid("Record reassignment is unsupported", span));
+                }
                 let value = self.expression(value)?;
                 let value = self.cast(value, binding.ty, span)?;
                 self.release_binding(binding, span)?;

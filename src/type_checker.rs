@@ -50,8 +50,15 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    /// A record declaration with a field type that cannot be compiled yet: only
+    /// `int`, `float`, and `bool` fields are supported.
     UnsupportedRecord {
         name: String,
+        span: Span,
+    },
+    /// An operation on a record value that cannot be compiled yet.
+    UnsupportedRecordUse {
+        feature: &'static str,
         span: Span,
     },
     DuplicateRecord {
@@ -169,14 +176,29 @@ pub struct TypeChecker {
     record_spans: Vec<Span>,
     /// Whether the last `check_program` got through record validation.
     records_validated: bool,
-    /// The first valid top-level record, reported once the whole program checks.
+    /// The first record feature that cannot be compiled yet, reported once the whole
+    /// program has checked, so an actual error elsewhere takes precedence.
     unsupported_record: Option<TypeError>,
+    /// Whether `check_program` is running, which is when unsupported record
+    /// features may be deferred instead of returned.
+    in_program: bool,
     result: Option<Type>,
     depth: usize,
 }
 
 /// Names of the built-in types, which a record may not take.
 const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "result"];
+
+/// Whether a record can be compiled: every field is `int`, `float`, or `bool`.
+/// Strings and nested records are not laid out or lowered yet.
+fn record_is_supported(fields: &[RecordField]) -> bool {
+    fields.iter().all(|field| {
+        matches!(
+            field.ty,
+            FieldType::Builtin(Type::Int | Type::Float | Type::Bool)
+        )
+    })
+}
 
 /// A field's span runs from its name to the end of its type, so the type name is
 /// the last `type_name.len()` bytes.
@@ -276,12 +298,29 @@ impl TypeChecker {
             record_spans: Vec::new(),
             records_validated: false,
             unsupported_record: None,
+            in_program: false,
             result: None,
             depth: 0,
         }
     }
     /// Checks statements in source order; successful earlier declarations are retained on error.
     pub fn check_program(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
+        self.in_program = true;
+        let result = self.check_whole_program(statements);
+        self.in_program = false;
+        result
+    }
+    /// Reports a record feature that cannot be compiled yet. Inside a program it is
+    /// remembered, first one wins, and returned after every statement has checked.
+    fn defer_unsupported(&mut self, error: TypeError) -> Result<(), TypeError> {
+        if self.in_program {
+            self.unsupported_record.get_or_insert(error);
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+    fn check_whole_program(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
         for stmt in statements {
             if let StmtKind::Function {
                 name,
@@ -314,14 +353,17 @@ impl TypeChecker {
         self.resolve_record_types(statements)?;
         self.records_validated = true;
         for stmt in statements {
-            // The first valid declaration is reported only after every statement has
-            // been checked, so a bad initializer after it is not hidden.
-            if let StmtKind::Record { name, .. } = &stmt.kind {
-                self.unsupported_record
-                    .get_or_insert_with(|| TypeError::UnsupportedRecord {
-                        name: name.clone(),
-                        span: stmt.span,
-                    });
+            // A declaration generates no code. One with fields that cannot be compiled
+            // yet is reported only after every statement has been checked, so a bad
+            // initializer after it is not hidden.
+            if let StmtKind::Record { name, fields } = &stmt.kind {
+                if !record_is_supported(fields) {
+                    self.unsupported_record
+                        .get_or_insert_with(|| TypeError::UnsupportedRecord {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                }
                 continue;
             }
             self.check_statement(stmt)?;
@@ -716,6 +758,16 @@ impl TypeChecker {
         match &stmt.kind {
             StmtKind::Set { name, value } => {
                 let ty = self.infer_expression(value)?;
+                // A record variable is created from an initializer. Copying one
+                // from another record value is not supported yet.
+                if matches!(ty, Type::Record(_))
+                    && !matches!(value.kind, ExprKind::RecordInit { .. })
+                {
+                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
+                        feature: "copying a record",
+                        span: value.span,
+                    })?;
+                }
                 self.symbols
                     .declare(name.clone(), ty)
                     .map_err(|error| match error {
@@ -735,9 +787,22 @@ impl TypeChecker {
                         name: name.clone(),
                         span: stmt.span,
                     })?;
-                self.mismatch(ty, value)
+                self.mismatch(ty, value)?;
+                if matches!(ty, Type::Record(_)) {
+                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
+                        feature: "reassigning a record variable",
+                        span: stmt.span,
+                    })?;
+                }
+                Ok(())
             }
-            StmtKind::AssignField { target, value } => self.assign_field(target, value),
+            StmtKind::AssignField { target, value } => {
+                self.assign_field(target, value)?;
+                self.defer_unsupported(TypeError::UnsupportedRecordUse {
+                    feature: "assigning a record field",
+                    span: target.span,
+                })
+            }
             StmtKind::Show(expr) => {
                 let ty = self.infer_expression(expr)?;
                 if matches!(ty, Type::Result(_)) {
@@ -752,6 +817,12 @@ impl TypeChecker {
                         message: "show requires a scalar, not an array",
                         span: expr.span,
                     });
+                }
+                if matches!(ty, Type::Record(_)) {
+                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
+                        feature: "printing a record",
+                        span: expr.span,
+                    })?;
                 }
                 Ok(())
             }
@@ -788,10 +859,16 @@ impl TypeChecker {
                     span: stmt.span,
                 })
             }
-            StmtKind::Record { name, .. } => Err(TypeError::UnsupportedRecord {
-                name: name.clone(),
-                span: stmt.span,
-            }),
+            StmtKind::Record { name, fields } => {
+                if record_is_supported(fields) {
+                    Ok(())
+                } else {
+                    Err(TypeError::UnsupportedRecord {
+                        name: name.clone(),
+                        span: stmt.span,
+                    })
+                }
+            }
             StmtKind::Function {
                 name,
                 parameters,

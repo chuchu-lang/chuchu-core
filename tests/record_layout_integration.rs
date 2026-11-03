@@ -7,7 +7,6 @@ use chuchu::codegen::{
     generate_program_with_records,
 };
 use chuchu::compiler::{CompileError, compile_source};
-use chuchu::diagnostic::render;
 use chuchu::lexer::tokenize;
 use chuchu::optimization::{BuildOptions, target_machine};
 use chuchu::parser::Parser;
@@ -18,7 +17,6 @@ use chuchu::type_checker::{TypeChecker, TypeError};
 use chuchu::types::{RecordId, Type};
 use inkwell::context::Context;
 use inkwell::types::BasicType;
-use std::path::Path;
 
 fn parse(source: &str) -> Vec<Stmt> {
     Parser::new(tokenize(source).unwrap())
@@ -39,14 +37,20 @@ fn span_of(source: &str, text: &str, occurrence: usize) -> Span {
     }
 }
 
-/// Parses and checks a program with valid records, which the checker still ends
-/// with `UnsupportedRecord`, and returns the statements and the metadata.
+/// Parses and checks a program whose record declarations are valid, and returns
+/// the statements and the metadata. The checker accepts the program, or ends with
+/// one of the errors for records that cannot be compiled yet; the metadata is
+/// available either way, because every declaration validated.
 fn checked(source: &str) -> (Vec<Stmt>, RecordTable) {
     let statements = parse(source);
     let mut checker = TypeChecker::new(SymbolTable::new());
     let result = checker.check_program(&statements);
     assert!(
-        matches!(result, Err(TypeError::UnsupportedRecord { .. })),
+        matches!(
+            result,
+            Ok(())
+                | Err(TypeError::UnsupportedRecord { .. } | TypeError::UnsupportedRecordUse { .. })
+        ),
         "{source:?}: {result:?}"
     );
     let table = checker
@@ -537,14 +541,19 @@ fn invalid_layouts_stop_generation_before_any_statement() {
 }
 
 #[test]
-fn using_a_record_is_still_rejected_by_code_generation() {
+fn code_generation_refuses_record_operations_that_are_not_supported() {
+    // The checker already rejects these; lowering refuses them too, so a program
+    // that skips the checker cannot produce a wrong executable.
     let initialized = format!(
         "{SCALARS}assign s as Sample {{\n    count: 1\n    ratio: 2.5\n    ready: true\n}}\n"
     );
     for (body, message) in [
-        ("", "Record values are unsupported"),
-        ("show s.count\n", "Record values are unsupported"),
-        ("assign t as s\n", "Record values are unsupported"),
+        ("assign t as s\n", "Record copying is unsupported"),
+        (
+            "reassign s as Sample {\n    count: 2\n    ratio: 1.0\n    ready: false\n}\n",
+            "Record reassignment is unsupported",
+        ),
+        ("show s\n", "show requires a scalar"),
     ] {
         let source = format!("{initialized}{body}");
         let (statements, table) = checked(&source);
@@ -557,8 +566,7 @@ fn using_a_record_is_still_rejected_by_code_generation() {
             result.map(|_| ())
         );
     }
-    // Mutation is rejected by its own arm. A record variable cannot exist yet, so
-    // lower the statement directly, without the checker.
+    // Field mutation is refused by its own arm. Lower the statement directly.
     let statements = parse("reassign s.count as 2");
     let context = Context::create();
     let result = generate_program_with_records(
@@ -574,14 +582,13 @@ fn using_a_record_is_still_rejected_by_code_generation() {
         "{:?}",
         result.map(|_| ())
     );
-    // A field read of an initializer, with no variable involved.
-    let source =
-        format!("{SCALARS}show Sample {{\n    count: 1\n    ratio: 2.5\n    ready: true\n}}.count");
-    let (statements, table) = checked(&source);
+    // Initializing and reading are supported, so the same program without the
+    // unsupported operations generates.
+    let (statements, table) = checked(&format!("{initialized}show s.count\n"));
     let context = Context::create();
-    assert!(
-        generate_program_with_records(&context, &statements, &table, None, &options()).is_err()
-    );
+    let module = generate_program_with_records(&context, &statements, &table, None, &options())
+        .expect("initialization and field reads are supported");
+    module.verify().unwrap();
 }
 
 #[test]
@@ -606,33 +613,33 @@ fn programs_without_records_generate_the_same_module_as_before() {
 }
 
 #[test]
-fn the_pipeline_still_rejects_every_record_program_as_unsupported() {
+fn the_pipeline_rejects_unsupported_record_programs_before_code_generation() {
     let directory =
         std::env::temp_dir().join(format!("cheeku record layout {}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let output = directory.join("program");
     let initializer = "{\n    count: 1\n    ratio: 2.5\n    ready: true\n}";
     for source in [
-        // Only a declaration, with supported and unsupported field types.
-        SCALARS.to_owned(),
+        // Fields that are not int, float, or bool, declared and used or not.
         "record Named {\n    name: string\n}".to_owned(),
         "record Inner {\n    n: int\n}\nrecord Outer {\n    inner: Inner\n}".to_owned(),
-        // Declaration plus use of every kind.
-        format!("{SCALARS}assign s as Sample {initializer}"),
-        format!("{SCALARS}assign s as Sample {initializer}\nshow s.count"),
+        format!("{SCALARS}record Named {{\n    name: string\n}}"),
+        // Operations on a record that cannot be compiled yet.
+        format!("{SCALARS}assign s as Sample {initializer}\nassign t as s"),
+        format!("{SCALARS}assign s as Sample {initializer}\nshow s"),
         format!("{SCALARS}assign s as Sample {initializer}\nreassign s.count as 2"),
-        // Mixed with ordinary statements, before and after.
-        format!("show 1\n{SCALARS}show 2"),
+        format!("{SCALARS}assign s as Sample {initializer}\nreassign s as Sample {initializer}"),
     ] {
         let error = compile_source(&source, &output).unwrap_err();
         assert!(
             matches!(
                 &error,
-                CompileError::Type(TypeError::UnsupportedRecord { .. })
+                CompileError::Type(
+                    TypeError::UnsupportedRecord { .. } | TypeError::UnsupportedRecordUse { .. }
+                )
             ),
             "{source:?}: {error:?}"
         );
-        assert!(render(&error, Path::new("p.chuchu"), &source).contains("cannot be compiled yet"));
         assert!(!output.exists(), "{source:?}");
     }
     std::fs::remove_dir_all(&directory).unwrap();

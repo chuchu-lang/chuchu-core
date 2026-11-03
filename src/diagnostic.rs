@@ -276,8 +276,14 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
             TypeError::UnsupportedRecord { name, span } => (
                 *span,
                 format!("Record '{name}' cannot be compiled yet"),
-                "record declarations are parsed but not supported".into(),
-                Some("Records are still under development; remove the declaration for now.".into()),
+                "this record has a field type that is not supported yet".into(),
+                Some("Records currently support only int, float, and bool fields.".into()),
+            ),
+            TypeError::UnsupportedRecordUse { feature, span } => (
+                *span,
+                format!("Records do not support {feature} yet"),
+                "this operation on a record cannot be compiled yet".into(),
+                Some("Records can be created with an initializer and read with 'variable.field'.".into()),
             ),
             TypeError::DuplicateRecord { name, span } => (
                 *span,

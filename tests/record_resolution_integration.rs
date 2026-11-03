@@ -211,7 +211,7 @@ fn builtin_type_names_cannot_name_a_record() {
     // Other words, and names that merely contain or differ in case from a built-in.
     for name in ["Int", "String", "results", "integer", "int2", "Result"] {
         let source = format!("record {name} {{\n    x: int\n}}");
-        assert!(is_unsupported(&source), "{source:?}: {:?}", check(&source));
+        assert_eq!(check(&source), Ok(()), "{source:?}");
     }
 }
 
@@ -299,7 +299,7 @@ fn diagnostics_render_clearly_and_produce_no_executable() {
             ],
         ),
         (
-            "record A {\n    x: int\n}",
+            "record A {\n    x: string\n}",
             vec!["Record 'A' cannot be compiled yet"],
         ),
     ] {
