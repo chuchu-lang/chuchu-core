@@ -70,6 +70,22 @@ pub struct Parameter {
     pub span: Span,
 }
 
+/// The type written after a record field's `:`. Built-in types reuse [`Type`];
+/// any other name is kept as written so nested records can resolve it later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldType {
+    Builtin(Type),
+    Named(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: FieldType,
+    /// Covers the field name through its type.
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
@@ -104,4 +120,9 @@ pub enum StmtKind {
         body: Vec<Stmt>,
     },
     Return(Expr),
+    /// Declares a record type using `record Name { field: type ... }`.
+    Record {
+        name: String,
+        fields: Vec<RecordField>,
+    },
 }

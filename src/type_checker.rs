@@ -47,6 +47,10 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    UnsupportedRecord {
+        name: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -270,6 +274,10 @@ impl TypeChecker {
                     .ok_or(TypeError::InvalidReturn { span: stmt.span })?;
                 self.mismatch(ty, expr)
             }
+            StmtKind::Record { name, .. } => Err(TypeError::UnsupportedRecord {
+                name: name.clone(),
+                span: stmt.span,
+            }),
             StmtKind::Function {
                 name,
                 parameters,

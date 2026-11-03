@@ -271,6 +271,12 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "a path through this function has no return value".into(),
                 Some("Add a return statement for every possible path through the function.".into()),
             ),
+            TypeError::UnsupportedRecord { name, span } => (
+                *span,
+                format!("Record '{name}' cannot be compiled yet"),
+                "record declarations are parsed but not supported".into(),
+                Some("Records are still under development; remove the declaration for now.".into()),
+            ),
         },
         _ => return None,
     };

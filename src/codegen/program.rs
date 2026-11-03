@@ -985,6 +985,7 @@ impl<'ctx> Generator<'ctx> {
                 Ok(())
             }
             StmtKind::Function { .. } => Err(invalid("Nested functions are unsupported", span)),
+            StmtKind::Record { .. } => Err(invalid("Record declarations are unsupported", span)),
         }
     }
 }

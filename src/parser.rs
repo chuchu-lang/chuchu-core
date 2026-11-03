@@ -1,4 +1,6 @@
-use crate::ast::{BinaryOperator, Expr, ExprKind, Parameter, Stmt, StmtKind};
+use crate::ast::{
+    BinaryOperator, Expr, ExprKind, FieldType, Parameter, RecordField, Stmt, StmtKind,
+};
 use crate::token::{Span, Token, TokenKind};
 use crate::types::{ScalarType, Type};
 
@@ -129,6 +131,68 @@ impl Parser {
         self.advance();
         Ok(ty)
     }
+    /// Parses `{ name: type }` with one field per line; returns the fields and
+    /// the end of the closing brace.
+    fn record_fields(&mut self) -> Result<(Vec<RecordField>, usize), ParseError> {
+        self.require(TokenKind::LeftBrace, "'{'")?;
+        let mut fields = Vec::new();
+        loop {
+            self.newlines()?;
+            let token = self.token()?;
+            if token.kind == TokenKind::RightBrace {
+                if fields.is_empty() {
+                    return Err(ParseError::ExpectedToken {
+                        expected: "at least one field",
+                        span: token.span,
+                    });
+                }
+                self.advance();
+                return Ok((fields, token.span.end));
+            }
+            if token.kind == TokenKind::Eof {
+                return Err(ParseError::ExpectedToken {
+                    expected: "'}'",
+                    span: token.span,
+                });
+            }
+            let (name, name_span) = self.name()?;
+            self.require(TokenKind::Colon, "':'")?;
+            let (ty, ty_span) = self.field_type()?;
+            fields.push(RecordField {
+                name,
+                ty,
+                span: Span {
+                    start: name_span.start,
+                    end: ty_span.end,
+                },
+            });
+            let token = self.token()?;
+            if !matches!(token.kind, TokenKind::Newline | TokenKind::RightBrace) {
+                return Err(ParseError::ExpectedToken {
+                    expected: "newline between fields",
+                    span: token.span,
+                });
+            }
+        }
+    }
+    fn field_type(&mut self) -> Result<(FieldType, Span), ParseError> {
+        let token = self.token()?;
+        let ty = match &token.kind {
+            TokenKind::Identifier(name) if name == "int" => FieldType::Builtin(Type::Int),
+            TokenKind::Identifier(name) if name == "float" => FieldType::Builtin(Type::Float),
+            TokenKind::Identifier(name) if name == "bool" => FieldType::Builtin(Type::Bool),
+            TokenKind::Identifier(name) if name == "string" => FieldType::Builtin(Type::String),
+            TokenKind::Identifier(name) if name != "result" => FieldType::Named(name.clone()),
+            _ => {
+                return Err(ParseError::ExpectedToken {
+                    expected: "int, float, bool, string, or a record type name",
+                    span: token.span,
+                });
+            }
+        };
+        self.advance();
+        Ok((ty, token.span))
+    }
     pub fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
         let token = self.token()?;
         let start = token.span.start;
@@ -225,6 +289,12 @@ impl Parser {
                     },
                     end,
                 )
+            }
+            TokenKind::Record => {
+                self.advance();
+                let (name, _) = self.name()?;
+                let (fields, end) = self.record_fields()?;
+                (StmtKind::Record { name, fields }, end)
             }
             _ => return Err(ParseError::ExpectedStatement { span: token.span }),
         };

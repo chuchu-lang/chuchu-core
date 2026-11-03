@@ -136,6 +136,11 @@ impl fmt::Display for CompileError {
                     "Function {name:?} must return a value on all paths at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::UnsupportedRecord { name, span } => write!(
+                    f,
+                    "Record {name:?} is declared but records are not supported yet at {}..{}",
+                    span.start, span.end
+                ),
             },
             Self::Codegen(error) => error.fmt(f),
             Self::Native(error) => error.fmt(f),
