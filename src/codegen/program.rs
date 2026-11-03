@@ -280,6 +280,7 @@ impl<'ctx> Generator<'ctx> {
                     false,
                 )
                 .into(),
+            Type::Record(_) => return Err(invalid("Record values are unsupported", span)),
             Type::Array { element, len } => {
                 if len == 0 || len > MAX_ARRAY_LEN {
                     return Err(invalid("Array length outside 1..=256", span));
@@ -428,6 +429,7 @@ impl<'ctx> Generator<'ctx> {
     fn expression_inner(&mut self, expr: &Expr) -> Result<Value<'ctx>, CodegenError> {
         let span = expr.span;
         match &expr.kind {
+            ExprKind::RecordInit { .. } => Err(invalid("Record values are unsupported", span)),
             ExprKind::Error { payload, code } => {
                 let code = self.expression(code)?.int(span)?;
                 self.error_result(*payload, code, span)

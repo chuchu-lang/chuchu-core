@@ -121,6 +121,8 @@ fn type_name(ty: Type) -> String {
         Type::String => "string".into(),
         Type::Result(payload) => format!("result<{}>", type_name(payload.ty())),
         Type::Array { element, len } => format!("{}[{len}]", type_name(element.scalar())),
+        // The checker reports mismatches involving records with their names.
+        Type::Record(_) => "record".into(),
     }
 }
 
@@ -322,6 +324,55 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 format!("Record '{}' contains itself: {}", path[0], path.join(" -> ")),
                 "this field makes the record infinitely large".into(),
                 Some("Records are stored by value, so a record cannot contain itself, even through other records. Break the cycle.".into()),
+            ),
+            TypeError::UndefinedRecord { name, span } => (
+                *span,
+                format!("Unknown record '{name}'"),
+                "no record with this name is declared".into(),
+                Some(format!("Declare 'record {name}' at the top level before using it.")),
+            ),
+            TypeError::UnknownField { record, field, span } => (
+                *span,
+                format!("Record '{record}' has no field '{field}'"),
+                "this field is not declared in the record".into(),
+                Some(format!("Use one of the fields declared in 'record {record}'.")),
+            ),
+            TypeError::DuplicateInitializer { record, field, span } => (
+                *span,
+                format!("Field '{field}' of record '{record}' is set more than once"),
+                "this field was already given a value".into(),
+                Some("Give each field exactly one value.".into()),
+            ),
+            TypeError::MissingFields { record, fields, span } => (
+                *span,
+                format!(
+                    "Record '{record}' is missing {}",
+                    if let [only] = fields.as_slice() {
+                        format!("field '{only}'")
+                    } else {
+                        format!(
+                            "fields {}",
+                            fields.iter().map(|f| format!("'{f}'")).collect::<Vec<_>>().join(", ")
+                        )
+                    }
+                ),
+                "every field must be given a value".into(),
+                Some(format!("Add a line such as '{}: <value>' for each missing field.", fields[0])),
+            ),
+            TypeError::FieldMismatch { detail, span } => (
+                *span,
+                format!(
+                    "Field '{}' of record '{}' expects {}, found {}",
+                    detail.field, detail.record, detail.expected, detail.actual
+                ),
+                format!("this expression has type {}", detail.actual),
+                None,
+            ),
+            TypeError::RecordMismatch { expected, actual, span } => (
+                *span,
+                format!("Type mismatch: expected {expected}, found {actual}"),
+                format!("this expression has type {actual}"),
+                None,
             ),
         },
         _ => return None,

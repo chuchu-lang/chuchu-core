@@ -28,11 +28,25 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
     Identifier(String),
+    /// A record value written as `Name { field: expression ... }`.
+    RecordInit {
+        name: String,
+        fields: Vec<FieldInit>,
+    },
     Binary {
         left: Box<Expr>,
         operator: BinaryOperator,
         right: Box<Expr>,
     },
+}
+
+/// One `field: expression` entry of a record initializer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldInit {
+    pub name: String,
+    pub value: Expr,
+    /// Covers the field name through the end of its value.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

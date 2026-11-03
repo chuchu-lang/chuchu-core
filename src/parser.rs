@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOperator, Expr, ExprKind, FieldType, Parameter, RecordField, Stmt, StmtKind,
+    BinaryOperator, Expr, ExprKind, FieldInit, FieldType, Parameter, RecordField, Stmt, StmtKind,
 };
 use crate::token::{Span, Token, TokenKind};
 use crate::types::{ScalarType, Type};
@@ -17,6 +17,10 @@ pub enum ParseError {
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    /// Set while parsing an `if` or `while` condition, where `name {` opens the
+    /// body block rather than a record initializer. Parentheses, brackets, and
+    /// call arguments clear it again.
+    in_condition: bool,
 }
 
 impl Parser {
@@ -24,6 +28,7 @@ impl Parser {
         Self {
             tokens,
             position: 0,
+            in_condition: false,
         }
     }
     pub fn current(&self) -> Option<&Token> {
@@ -228,7 +233,7 @@ impl Parser {
             }
             TokenKind::If => {
                 self.advance();
-                let condition = self.parse_expression()?;
+                let condition = self.condition()?;
                 let (then_body, mut end) = self.block()?;
                 let saved = self.position;
                 self.newlines()?;
@@ -252,7 +257,7 @@ impl Parser {
             }
             TokenKind::While => {
                 self.advance();
-                let condition = self.parse_expression()?;
+                let condition = self.condition()?;
                 let (body, end) = self.block()?;
                 (StmtKind::While { condition, body }, end)
             }
@@ -306,6 +311,69 @@ impl Parser {
     pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         self.binary(0)
     }
+    /// Parses an `if` or `while` condition, where `name {` must open the body.
+    fn condition(&mut self) -> Result<Expr, ParseError> {
+        let outer = std::mem::replace(&mut self.in_condition, true);
+        let condition = self.parse_expression();
+        self.in_condition = outer;
+        condition
+    }
+    /// Parses an expression nested in delimiters, where a record initializer is
+    /// unambiguous again even inside a condition.
+    fn nested_expression(&mut self) -> Result<Expr, ParseError> {
+        let outer = std::mem::replace(&mut self.in_condition, false);
+        let expression = self.parse_expression();
+        self.in_condition = outer;
+        expression
+    }
+    /// Parses `{ field: expression }` after a record name, one field per line like
+    /// a declaration. Which fields are required is checked by the type checker.
+    fn record_init(&mut self, name: String, name_span: Span) -> Result<Expr, ParseError> {
+        self.require(TokenKind::LeftBrace, "'{'")?;
+        let mut fields = Vec::new();
+        let end = loop {
+            self.newlines()?;
+            let token = self.token()?;
+            match token.kind {
+                TokenKind::RightBrace => {
+                    self.advance();
+                    break token.span.end;
+                }
+                TokenKind::Eof => {
+                    return Err(ParseError::ExpectedToken {
+                        expected: "'}'",
+                        span: token.span,
+                    });
+                }
+                _ => {}
+            }
+            let (field, field_span) = self.name()?;
+            self.require(TokenKind::Colon, "':'")?;
+            let value = self.nested_expression()?;
+            fields.push(FieldInit {
+                name: field,
+                span: Span {
+                    start: field_span.start,
+                    end: value.span.end,
+                },
+                value,
+            });
+            let token = self.token()?;
+            if !matches!(token.kind, TokenKind::Newline | TokenKind::RightBrace) {
+                return Err(ParseError::ExpectedToken {
+                    expected: "newline between fields",
+                    span: token.span,
+                });
+            }
+        };
+        Ok(Expr {
+            kind: ExprKind::RecordInit { name, fields },
+            span: Span {
+                start: name_span.start,
+                end,
+            },
+        })
+    }
     fn operator(&self) -> Option<(BinaryOperator, u8)> {
         use BinaryOperator as B;
         Some(match self.current()?.kind {
@@ -354,7 +422,7 @@ impl Parser {
         self.newlines()?;
         if !self.at(&closing) {
             loop {
-                arguments.push(self.parse_expression()?);
+                arguments.push(self.nested_expression()?);
                 self.newlines()?;
                 if !self.at(&TokenKind::Comma) {
                     break;
@@ -380,7 +448,7 @@ impl Parser {
                 })?;
                 self.require(TokenKind::Greater, "'>'")?;
                 self.require(TokenKind::LeftParen, "'('")?;
-                let code = self.parse_expression()?;
+                let code = self.nested_expression()?;
                 let end = self.require(TokenKind::RightParen, "')'")?.span.end;
                 Expr {
                     kind: ExprKind::Error {
@@ -409,10 +477,15 @@ impl Parser {
                 kind: ExprKind::Bool(token.kind == TokenKind::True),
                 span: token.span,
             },
-            TokenKind::Identifier(name) => Expr {
-                kind: ExprKind::Identifier(name),
-                span: token.span,
-            },
+            TokenKind::Identifier(name) => {
+                if self.at(&TokenKind::LeftBrace) && !self.in_condition {
+                    return self.record_init(name, token.span);
+                }
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    span: token.span,
+                }
+            }
             TokenKind::Minus => {
                 let inner = self.binary(4)?;
                 let span = Span {
@@ -426,7 +499,7 @@ impl Parser {
             }
             TokenKind::LeftParen => {
                 self.newlines()?;
-                let mut inner = self.parse_expression()?;
+                let mut inner = self.nested_expression()?;
                 self.newlines()?;
                 let end = self.require(TokenKind::RightParen, "')'")?.span.end;
                 inner.span = Span {
@@ -469,7 +542,7 @@ impl Parser {
                 };
             } else if self.at(&TokenKind::LeftBracket) {
                 self.advance();
-                let index = self.parse_expression()?;
+                let index = self.nested_expression()?;
                 let end = self.require(TokenKind::RightBracket, "']'")?.span.end;
                 let span = Span {
                     start: expression.span.start,

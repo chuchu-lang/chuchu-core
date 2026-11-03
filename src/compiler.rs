@@ -181,6 +181,63 @@ impl fmt::Display for CompileError {
                     span.start,
                     span.end
                 ),
+                TypeError::UndefinedRecord { name, span } => write!(
+                    f,
+                    "Undefined record {name:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::UnknownField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} has no field {field:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::DuplicateInitializer {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Field {field:?} of record {record:?} is set more than once at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::MissingFields {
+                    record,
+                    fields,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} is missing {} at {}..{}",
+                    fields
+                        .iter()
+                        .map(|field| format!("{field:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    span.start,
+                    span.end
+                ),
+                TypeError::FieldMismatch { detail, span } => write!(
+                    f,
+                    "Field {:?} of record {:?} expects {}, found {} at {}..{}",
+                    detail.field,
+                    detail.record,
+                    detail.expected,
+                    detail.actual,
+                    span.start,
+                    span.end
+                ),
+                TypeError::RecordMismatch {
+                    expected,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Type mismatch: expected {expected}, found {actual} at {}..{}",
+                    span.start, span.end
+                ),
             },
             Self::Codegen(error) => error.fmt(f),
             Self::Native(error) => error.fmt(f),

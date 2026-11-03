@@ -5,8 +5,18 @@ pub enum Type {
     Bool,
     String,
     Result(ScalarType),
-    Array { element: NumericType, len: usize },
+    Array {
+        element: NumericType,
+        len: usize,
+    },
+    /// A user-defined record, identified by its position among the declarations.
+    Record(RecordId),
 }
+
+/// Identifies a declared record. Ids are handed out by the type checker in
+/// declaration order, which keeps [`Type`] `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RecordId(pub usize);
 
 /// The first result types carry one scalar. Nested results and array payloads
 /// are deliberately excluded until the language has general aggregate types.
