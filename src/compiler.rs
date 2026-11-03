@@ -194,6 +194,7 @@ impl fmt::Display for CompileError {
                     span.start, span.end
                 ),
                 TypeError::UnknownField {
+                TypeError::UndefinedField {
                     record,
                     field,
                     span,
@@ -221,6 +222,7 @@ impl fmt::Display for CompileError {
                     span.start, span.end
                 ),
                 TypeError::DuplicateInitializer {
+                TypeError::MissingField {
                     record,
                     field,
                     span,
@@ -261,6 +263,21 @@ impl fmt::Display for CompileError {
                 } => write!(
                     f,
                     "Type mismatch: expected {expected}, found {actual} at {}..{}",
+                    "Missing field {field:?} in {record:?} instantiation at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::NotARecord { ty, span } => write!(
+                    f,
+                    "Type {ty:?} is not a record at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::InvalidRecord {
+                    name,
+                    message,
+                    span,
+                } => write!(
+                    f,
+                    "Invalid record {name:?}: {message} at {}..{}",
                     span.start, span.end
                 ),
             },
@@ -422,6 +439,11 @@ fn compile_input(
     let llvm_generation = start.elapsed();
     let native =
         build_executable_with_options(&module, output, options).map_err(CompileError::Native)?;
+    #[cfg(target_os = "windows")]
+    {
+        std::mem::forget(module);
+        std::mem::forget(context);
+    }
     Ok(CompilationTimings {
         lex,
         parse,

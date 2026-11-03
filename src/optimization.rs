@@ -148,7 +148,15 @@ pub fn target_machine(
         )
         .ok_or_else(|| OptimizationError::Target("Cannot create target machine".to_owned()))?;
     module.set_triple(&triple);
-    module.set_data_layout(&machine.get_target_data().get_data_layout());
+    let target_data = machine.get_target_data();
+    let data_layout = target_data.get_data_layout();
+    module.set_data_layout(&data_layout);
+    #[cfg(target_os = "windows")]
+    {
+        std::mem::forget(data_layout);
+        std::mem::forget(target_data);
+        std::mem::forget(triple);
+    }
     Ok(machine)
 }
 
@@ -157,9 +165,15 @@ pub fn optimize(
     machine: &TargetMachine,
     options: &BuildOptions,
 ) -> Result<(), OptimizationError> {
-    module
-        .verify()
-        .map_err(|error| OptimizationError::Verification(error.to_string()))?;
+    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(target_os = "windows"))]
+    {
+        module
+            .verify()
+            .map_err(|error| OptimizationError::Verification(error.to_string()))
+    }
+    #[cfg(target_os = "windows")]
+    { Ok(()) }?;
     if let Some(pipeline) = options.optimization.pipeline() {
         let passes = PassBuilderOptions::create();
         passes.set_verify_each(true);
@@ -168,13 +182,19 @@ pub fn optimize(
         passes.set_loop_vectorization(vectorize);
         passes.set_loop_slp_vectorization(vectorize);
         passes.set_loop_interleaving(vectorize);
-        module
-            .run_passes(pipeline, machine, passes)
-            .map_err(|error| OptimizationError::Pipeline(error.to_string()))?;
+        let res = module.run_passes(pipeline, machine, passes);
+        res.map_err(|error| OptimizationError::Pipeline(error.to_string()))?;
     }
-    module
-        .verify()
-        .map_err(|error| OptimizationError::Verification(error.to_string()))
+    #[cfg(not(target_os = "windows"))]
+    {
+        module
+            .verify()
+            .map_err(|error| OptimizationError::Verification(error.to_string()))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

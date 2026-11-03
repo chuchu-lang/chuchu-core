@@ -262,6 +262,28 @@ impl<'ctx> DebugState<'ctx> {
                     )
                     .as_type()
             }
+            Type::Record(ref name) => {
+                let BasicTypeEnum::StructType(_structure) = llvm else {
+                    unreachable!("record lowering type")
+                };
+                let scope = self.unit.as_debug_info_scope();
+                self.builder
+                    .create_struct_type(
+                        scope,
+                        name,
+                        self.unit.get_file(),
+                        0,
+                        bits,
+                        self.data.get_abi_alignment(&llvm) * 8,
+                        DIFlags::ZERO,
+                        None,
+                        &[],
+                        0,
+                        None,
+                        "",
+                    )
+                    .as_type()
+            }
             _ => {
                 let (name, encoding) = match ty {
                     Type::Int => ("Int", 0x05),     // DW_ATE_signed
@@ -275,7 +297,7 @@ impl<'ctx> DebugState<'ctx> {
                     .as_type()
             }
         };
-        self.types.push((ty, debug));
+        self.types.push((ty.clone(), debug));
         Ok(debug)
     }
 
@@ -300,7 +322,7 @@ impl<'ctx> DebugState<'ctx> {
         };
         let params = parameters
             .iter()
-            .map(|(ty, llvm)| self.ty(*ty, *llvm))
+            .map(|(ty, llvm)| self.ty(ty.clone(), *llvm))
             .collect::<Result<Vec<_>, _>>()?;
         let signature = self.builder.create_subroutine_type(
             self.unit.get_file(),
@@ -370,7 +392,7 @@ impl<'ctx> DebugState<'ctx> {
         block: inkwell::basic_block::BasicBlock<'ctx>,
     ) -> Result<(), CodegenError> {
         let pos = self.position(span)?;
-        let ty = self.ty(binding.ty, llvm)?;
+        let ty = self.ty(binding.ty.clone(), llvm)?;
         let scope = *self
             .scopes
             .last()
