@@ -21,6 +21,8 @@ pub enum TokenKind {
     Reassign,
     Return,
     Err,
+    /// Record type declaration keyword: `record`.
+    Record,
 
     Plus,
     Minus,
