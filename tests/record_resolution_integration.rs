@@ -42,8 +42,8 @@ fn type_span(source: &str, field: &str) -> Span {
     }
 }
 
-fn is_unsupported(source: &str) -> bool {
-    matches!(check(source), Err(TypeError::UnsupportedRecord { .. }))
+fn is_valid(source: &str) -> bool {
+    check(source) == Ok(())
 }
 
 fn recursive(source: &str, path: &[&str], span: Span) {
@@ -58,7 +58,7 @@ fn recursive(source: &str, path: &[&str], span: Span) {
 }
 
 #[test]
-fn valid_nesting_resolves_and_is_still_unsupported() {
+fn valid_nesting_resolves() {
     for source in [
         // One level, two levels, and several fields of different kinds.
         "record Address {\n    city: string\n}\nrecord Person {\n    name: string\n    home: Address\n}",
@@ -70,7 +70,7 @@ fn valid_nesting_resolves_and_is_still_unsupported() {
         // Mixed with ordinary code.
         "show 1\nrecord P {\n    x: int\n}\nrecord Q {\n    p: P\n}\nshow 2",
     ] {
-        assert!(is_unsupported(source), "{source:?}: {:?}", check(source));
+        assert!(is_valid(source), "{source:?}: {:?}", check(source));
     }
 }
 
@@ -82,7 +82,7 @@ fn forward_references_between_records_are_supported() {
         // A function between the declarations does not matter.
         "record Course {\n    teacher: Student\n}\nfunction f() be int {\n    return 1\n}\nrecord Student {\n    n: int\n}",
     ] {
-        assert!(is_unsupported(source), "{source:?}: {:?}", check(source));
+        assert!(is_valid(source), "{source:?}: {:?}", check(source));
     }
 }
 
@@ -165,7 +165,7 @@ fn shared_and_repeated_dependencies_are_not_cycles() {
             p = i - 1
         ));
     }
-    assert!(is_unsupported(&source), "{:?}", check(&source));
+    assert!(is_valid(&source), "{:?}", check(&source));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn very_long_chains_do_not_overflow_the_stack() {
         source.push_str(&format!("record R{i} {{\n    next: R{}\n}}\n", i + 1));
     }
     source.push_str(&format!("record R{count} {{\n    v: int\n}}\n"));
-    assert!(is_unsupported(&source));
+    assert!(is_valid(&source));
     // Close the loop at the far end.
     let closed = source.replace(
         &format!("record R{count} {{\n    v: int\n}}\n"),
@@ -299,8 +299,8 @@ fn diagnostics_render_clearly_and_produce_no_executable() {
             ],
         ),
         (
-            "record A {\n    x: string\n}",
-            vec!["Record 'A' cannot be compiled yet"],
+            "record A {\n    x: Missing\n}",
+            vec!["Unknown type 'Missing' in record 'A'"],
         ),
     ] {
         let error = compile_source(source, &output).unwrap_err();

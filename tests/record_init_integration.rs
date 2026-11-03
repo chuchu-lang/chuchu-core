@@ -50,20 +50,13 @@ fn field_mismatch(
     })
 }
 
-fn unsupported(name: &str, span: Span) -> Result<(), TypeError> {
-    Err(TypeError::UnsupportedRecord {
-        name: name.into(),
-        span,
-    })
+/// What checking a program whose statements are all valid gives.
+fn accepted() -> Result<(), TypeError> {
+    Ok(())
 }
 
 #[test]
-fn valid_initializers_are_still_reported_as_unsupported() {
-    let declaration = span_of(
-        STUDENT,
-        "record Student {\n    name: string\n    age: int\n}",
-        0,
-    );
+fn valid_initializers_check_successfully() {
     for body in [
         "assign s as Student {\n    name: \"Ali\"\n    age: 22\n}",
         // Fields may be given in any order.
@@ -73,7 +66,7 @@ fn valid_initializers_are_still_reported_as_unsupported() {
         // `Student` has two fields, so the single-field form is the odd one out.
         let source = format!("{STUDENT}{body}");
         let expected = if body.contains("age") {
-            unsupported("Student", declaration)
+            accepted()
         } else {
             Err(TypeError::MissingFields {
                 record: "Student".into(),
@@ -104,11 +97,10 @@ fn an_int_value_widens_to_a_float_field_but_not_the_reverse() {
 #[test]
 fn nested_initializers_are_validated_at_every_level() {
     let records = "record Person {\n    name: string\n}\nrecord Course {\n    title: string\n    teacher: Person\n}\n";
-    let declaration = span_of(records, "record Person {\n    name: string\n}", 0);
     let valid = format!(
         "{records}assign c as Course {{\n    title: \"Math\"\n    teacher: Person {{\n        name: \"Sam\"\n    }}\n}}"
     );
-    assert_eq!(check(&valid), unsupported("Person", declaration));
+    assert_eq!(check(&valid), accepted());
 
     // An error inside the nested initializer is reported at that level.
     let bad = format!(
@@ -150,13 +142,10 @@ fn nested_initializers_are_validated_at_every_level() {
     let variable = format!(
         "{records}assign p as Person {{\n    name: \"Sam\"\n}}\nassign c as Course {{\n    title: \"Math\"\n    teacher: p\n}}"
     );
-    assert_eq!(check(&variable), unsupported("Person", declaration));
+    assert_eq!(check(&variable), accepted());
     // Three levels deep.
     let deep = "record A {\n    b: B\n}\nrecord B {\n    c: C\n}\nrecord C {\n    n: int\n}\nassign a as A {\n    b: B {\n        c: C {\n            n: 1\n        }\n    }\n}";
-    assert_eq!(
-        check(deep),
-        unsupported("A", span_of(deep, "record A {\n    b: B\n}", 0))
-    );
+    assert_eq!(check(deep), accepted());
     let deep_bad = deep.replace("n: 1", "n: true");
     assert!(matches!(
         check(&deep_bad),
@@ -169,23 +158,10 @@ fn nested_initializers_are_validated_at_every_level() {
 fn forward_references_work_for_declarations_and_initializers() {
     // The initializer comes before the declarations it uses.
     let source = "assign c as Course {\n    title: \"Math\"\n    teacher: Person {\n        name: \"Sam\"\n    }\n}\nrecord Course {\n    title: string\n    teacher: Person\n}\nrecord Person {\n    name: string\n}";
-    assert_eq!(
-        check(source),
-        unsupported(
-            "Course",
-            span_of(
-                source,
-                "record Course {\n    title: string\n    teacher: Person\n}",
-                0
-            )
-        )
-    );
+    assert_eq!(check(source), accepted());
     // A forward-referenced field type declared after its user.
     let source = "record Course {\n    teacher: Person\n}\nrecord Person {\n    name: string\n}\nassign c as Course {\n    teacher: Person {\n        name: \"Sam\"\n    }\n}";
-    assert!(matches!(
-        check(source),
-        Err(TypeError::UnsupportedRecord { name, .. }) if name == "Course"
-    ));
+    assert_eq!(check(source), accepted());
     // Errors in a forward-used initializer are still found.
     let source = "assign p as Person {\n    name: 1\n}\nrecord Person {\n    name: string\n}";
     assert!(matches!(
@@ -310,13 +286,9 @@ fn initializer_errors_after_a_declaration_are_not_hidden() {
         check(&source),
         Err(TypeError::UndefinedVariable { .. })
     ));
-    // With every statement valid, the first unsupported declaration is the one
-    // reported.
+    // With every statement valid, the whole program is accepted.
     let source = "record A {\n    s: string\n}\nrecord B {\n    s: string\n}\nassign a as A {\n    s: \"x\"\n}";
-    assert_eq!(
-        check(source),
-        unsupported("A", span_of(source, "record A {\n    s: string\n}", 0))
-    );
+    assert_eq!(check(source), accepted());
 }
 
 #[test]
@@ -359,10 +331,7 @@ fn earlier_record_validation_still_comes_first() {
 fn a_record_is_a_value_of_its_own_type() {
     let source =
         format!("{STUDENT}assign s as Student {{\n    name: \"a\"\n    age: 1\n}}\nassign t as s");
-    assert!(matches!(
-        check(&source),
-        Err(TypeError::UnsupportedRecord { .. })
-    ));
+    assert_eq!(check(&source), accepted());
     // Reassigning needs the same record type.
     let source = format!(
         "{STUDENT}assign s as Student {{\n    name: \"a\"\n    age: 1\n}}\nreassign s as 5"
@@ -473,10 +442,7 @@ fn long_chains_of_nested_initializers_are_checked() {
     for _ in 0..depth - 1 {
         source += "\n}";
     }
-    assert!(matches!(
-        check(&source),
-        Err(TypeError::UnsupportedRecord { name, .. }) if name == "R0"
-    ));
+    assert_eq!(check(&source), accepted());
     assert!(matches!(
         check(&source.replace("n: 1", "n: \"x\"")),
         Err(TypeError::FieldMismatch { .. })
@@ -550,8 +516,8 @@ fn diagnostics_render_clearly_and_produce_no_executable() {
             ],
         ),
         (
-            format!("{student}assign s as Student {{\n    name: \"a\"\n    age: 1\n}}"),
-            vec!["Record 'Student' cannot be compiled yet"],
+            format!("{student}assign s as Student {{\n    name: \"a\"\n    age: 1\n}}\nshow s"),
+            vec!["Records do not support printing a record yet"],
         ),
     ] {
         let error = compile_source(&body, &output).unwrap_err();

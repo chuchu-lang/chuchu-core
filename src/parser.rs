@@ -152,6 +152,33 @@ impl Parser {
         self.advance();
         Ok(ty)
     }
+    /// Parses a parameter or return type: a built-in type, or the name of a record,
+    /// which the type checker resolves.
+    fn type_annotation(&mut self) -> Result<(FieldType, Span), ParseError> {
+        let token = self.token()?;
+        if let TokenKind::Identifier(name) = &token.kind
+            && !matches!(
+                name.as_str(),
+                "int" | "float" | "bool" | "string" | "result"
+            )
+        {
+            self.advance();
+            return Ok((FieldType::Named(name.clone()), token.span));
+        }
+        let ty = self.annotation()?;
+        // The annotation ends where the last token it consumed ends.
+        let end = self
+            .tokens
+            .get(self.position.saturating_sub(1))
+            .map_or(token.span.end, |last| last.span.end);
+        Ok((
+            FieldType::Builtin(ty),
+            Span {
+                start: token.span.start,
+                end,
+            },
+        ))
+    }
     /// Parses `{ name: type }` with one field per line; returns the fields and
     /// the end of the closing brace.
     fn record_fields(&mut self) -> Result<(Vec<RecordField>, usize), ParseError> {
@@ -307,8 +334,13 @@ impl Parser {
                     loop {
                         let (name, span) = self.name()?;
                         self.require(TokenKind::Colon, "':'")?;
-                        let ty = self.annotation()?;
-                        parameters.push(Parameter { name, ty, span });
+                        let (ty, ty_span) = self.type_annotation()?;
+                        parameters.push(Parameter {
+                            name,
+                            ty,
+                            span,
+                            ty_span,
+                        });
                         self.newlines()?;
                         if !self.at(&TokenKind::Comma) {
                             break;
@@ -319,13 +351,14 @@ impl Parser {
                 }
                 self.require(TokenKind::RightParen, "')'")?;
                 self.require(TokenKind::Be, "'be'")?;
-                let return_type = self.annotation()?;
+                let (return_type, return_span) = self.type_annotation()?;
                 let (body, end) = self.block()?;
                 (
                     StmtKind::Function {
                         name,
                         parameters,
                         return_type,
+                        return_span,
                         body,
                     },
                     end,

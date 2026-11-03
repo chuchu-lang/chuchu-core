@@ -324,13 +324,21 @@ fn the_generated_llvm_represents_a_record_as_a_struct_in_declaration_order() {
         .map(|line| line.rsplit(", ").next().unwrap().trim().parse().unwrap())
         .collect();
     assert_eq!(inserted, [0, 1, 2], "{ir}");
-    // ...and each read extracts the element at the field's index.
-    let extracted: Vec<u32> = ir
+    // ...and each read addresses the element at the field's index in place.
+    let addressed: Vec<u32> = ir
         .lines()
-        .filter(|line| line.contains("extractvalue %chuchu.record.Sample"))
-        .map(|line| line.rsplit(", ").next().unwrap().trim().parse().unwrap())
+        .filter(|line| line.contains("getelementptr inbounds nuw %chuchu.record.Sample"))
+        .map(|line| {
+            line.rsplit(", ")
+                .next()
+                .unwrap()
+                .trim()
+                .trim_start_matches("i32 ")
+                .parse()
+                .unwrap()
+        })
         .collect();
-    assert_eq!(extracted, [0, 1, 2], "{ir}");
+    assert_eq!(addressed, [0, 1, 2], "{ir}");
     // The compiled program agrees.
     let output = case.run();
     assert_eq!(
@@ -401,41 +409,13 @@ fn debug_information_describes_a_record_with_its_fields() {
 fn unsupported_record_operations_fail_to_compile_and_leave_no_executable() {
     let record =
         "record P {\n    x: int\n    f: float\n}\nassign s as P {\n    x: 1\n    f: 2.5\n}\n";
-    for (body, message) in [
-        // Operations that are not supported yet.
-        (
-            "assign t as s\n",
-            "Records do not support copying a record yet",
-        ),
-        (
-            "reassign s as P {\n    x: 2\n    f: 1.0\n}\n",
-            "Records do not support reassigning a record variable yet",
-        ),
-        (
-            "reassign s.x as 5\n",
-            "Records do not support assigning a record field yet",
-        ),
-        ("show s\n", "Records do not support printing a record yet"),
-        (
-            "show P {\n    x: 1\n    f: 1.0\n}\n",
+    // The only valid record operation left that cannot be compiled.
+    for body in ["show s\n", "show P {\n    x: 1\n    f: 1.0\n}\n"] {
+        refuses(
+            &format!("{record}{body}"),
             "Records do not support printing a record yet",
-        ),
-    ] {
-        refuses(&format!("{record}{body}"), message);
+        );
     }
-    // Fields that are not int, float, or bool, even when the record is never used.
-    refuses(
-        "record Named {\n    name: string\n    n: int\n}\nshow 1\n",
-        "Record 'Named' cannot be compiled yet",
-    );
-    refuses(
-        "record Inner {\n    n: int\n}\nrecord Outer {\n    inner: Inner\n}\nshow 1\n",
-        "Record 'Outer' cannot be compiled yet",
-    );
-    refuses(
-        "record Named {\n    name: string\n}\nassign n as Named {\n    name: \"x\"\n}\nshow 1\n",
-        "Record 'Named' cannot be compiled yet",
-    );
     // Real errors are still reported as themselves.
     refuses(
         &format!("{record}show s.missing\n"),
@@ -444,6 +424,14 @@ fn unsupported_record_operations_fail_to_compile_and_leave_no_executable() {
     refuses(
         &format!("{record}assign t as P {{\n    x: \"no\"\n    f: 1.0\n}}\n"),
         "Field 'x' of record 'P' expects int, found string",
+    );
+    refuses(
+        "record A {\n    b: B\n}\nrecord B {\n    a: A\n}\nshow 1\n",
+        "Record 'A' contains itself: A -> B -> A",
+    );
+    refuses(
+        "function f(p: Missing) be int {\n    return 1\n}\nshow 1\n",
+        "Unknown record 'Missing'",
     );
 }
 

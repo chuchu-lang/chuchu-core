@@ -42,23 +42,15 @@ fn span_of(source: &str, text: &str, occurrence: usize) -> Span {
     }
 }
 
-/// The error a program whose statements are all valid ends with: the first record
-/// declaration, here always `Address`.
-fn unsupported() -> Result<(), TypeError> {
-    Err(TypeError::UnsupportedRecord {
-        name: "Address".into(),
-        span: span_of(
-            PRELUDE,
-            "record Address {\n    city: string\n    zip: int\n}",
-            0,
-        ),
-    })
+/// What checking a program whose statements are all valid gives.
+fn accepted() -> Result<(), TypeError> {
+    Ok(())
 }
 
 /// A checker that has seen `PRELUDE`, to infer types of single expressions.
 fn prelude_checker() -> TypeChecker {
     let mut checker = TypeChecker::new(SymbolTable::new());
-    assert_eq!(checker.check_program(&parse(PRELUDE)), unsupported());
+    assert_eq!(checker.check_program(&parse(PRELUDE)), accepted());
     checker
 }
 
@@ -114,7 +106,7 @@ fn access_results_take_part_in_expressions() {
 }
 
 #[test]
-fn valid_access_is_still_reported_as_unsupported() {
+fn valid_access_checks_successfully() {
     for body in [
         "show student.name\nshow student.age + 1\nshow student.address.city",
         "assign n as student.age\nassign c as student.address.city",
@@ -129,7 +121,7 @@ fn valid_access_is_still_reported_as_unsupported() {
         // An initializer can be read directly.
         "show Address {\n    city: \"x\"\n    zip: 1\n}.zip",
     ] {
-        assert_eq!(check_body(body), unsupported(), "{body:?}");
+        assert_eq!(check_body(body), accepted(), "{body:?}");
     }
 }
 
@@ -153,7 +145,7 @@ fn access_works_in_every_expression_position() {
         // An int reads into a float field.
         "assign other as Student {\n    name: \"x\"\n    age: 1\n    gpa: student.age\n    active: true\n    address: home\n}",
     ] {
-        assert_eq!(check_body(body), unsupported(), "{body:?}");
+        assert_eq!(check_body(body), accepted(), "{body:?}");
     }
 }
 
@@ -256,9 +248,29 @@ fn access_on_a_non_record_is_rejected_at_the_object() {
 }
 
 #[test]
-fn a_function_result_has_no_fields_because_functions_cannot_return_records() {
-    // Function signatures only name built-in types, so `f().x` can never read a
-    // field today; the error is the same as for any other non-record value.
+fn a_function_result_has_fields_only_when_it_returns_a_record() {
+    // A function that returns a record can have its fields read directly...
+    let source = format!(
+        "{PRELUDE}function get(s: Student) be Student {{\n    return s\n}}\nshow get(student).name\nshow get(student).address.zip"
+    );
+    assert_eq!(check(&source), Ok(()));
+    let checker = {
+        let mut checker = TypeChecker::new(SymbolTable::new());
+        checker.check_program(&parse(&source)).unwrap();
+        checker
+    };
+    assert_eq!(type_of(&checker, "get(student).name"), Ok(Type::String));
+    assert_eq!(type_of(&checker, "get(student).address.zip"), Ok(Type::Int));
+    // ...an unknown field of the result is an unknown field...
+    let source = format!(
+        "{PRELUDE}function get(s: Student) be Student {{\n    return s\n}}\nshow get(student).height"
+    );
+    assert!(matches!(
+        check(&source),
+        Err(TypeError::UnknownField { record, field, .. })
+            if record == "Student" && field == "height"
+    ));
+    // ...and a function that returns anything else has no fields to read.
     let source = format!("{PRELUDE}function f() be int {{\n    return 1\n}}\nshow f().name");
     assert_eq!(
         check(&source),
@@ -267,13 +279,6 @@ fn a_function_result_has_no_fields_because_functions_cannot_return_records() {
             actual: "int".into(),
             span: span_of(&source, "f()", 1),
         })
-    );
-    assert!(
-        chuchu::parser::Parser::new(
-            tokenize("function f() be Student {\n    return 1\n}").unwrap()
-        )
-        .parse_program()
-        .is_err()
     );
 }
 
@@ -388,7 +393,7 @@ fn access_errors_come_in_source_order_with_the_rest_of_the_program() {
         check_body("show student.nope"),
         Err(TypeError::UnknownField { .. })
     ));
-    assert_eq!(check_body("show student.name"), unsupported());
+    assert_eq!(check_body("show student.name"), accepted());
 }
 
 #[test]
@@ -447,15 +452,9 @@ fn earlier_record_validation_still_applies_with_access_present() {
 
 #[test]
 fn a_record_that_is_never_accessed_is_unaffected() {
-    assert_eq!(check_body("show 1"), unsupported());
+    assert_eq!(check_body("show 1"), accepted());
     assert_eq!(check("record A {\n    x: int\n}"), Ok(()));
-    assert_eq!(
-        check("record A {\n    x: string\n}"),
-        Err(TypeError::UnsupportedRecord {
-            name: "A".into(),
-            span: Span { start: 0, end: 26 },
-        })
-    );
+    assert_eq!(check("record A {\n    x: string\n}"), Ok(()));
     // Programs without records behave as before, including floats with dots.
     assert_eq!(
         check("assign a as 1.5\nassign b as 2.\nshow a + b * 3.25e1"),
@@ -511,10 +510,7 @@ fn long_chains_of_access_are_checked() {
     }
     let path = "v".to_owned() + &".next".repeat(depth - 1);
     let valid = format!("{source}\nshow {path}.n");
-    assert!(matches!(
-        check(&valid),
-        Err(TypeError::UnsupportedRecord { name, .. }) if name == "R0"
-    ));
+    assert_eq!(check(&valid), Ok(()));
     let invalid = format!("{source}\nshow {path}.n.n");
     assert!(matches!(
         check(&invalid),
@@ -575,8 +571,8 @@ fn diagnostics_render_clearly_and_produce_no_executable() {
             ],
         ),
         (
-            "show student.age",
-            vec!["Record 'Address' cannot be compiled yet".to_owned()],
+            "show student",
+            vec!["Records do not support printing a record yet".to_owned()],
         ),
     ] {
         let source = format!("{PRELUDE}{body}");

@@ -47,17 +47,9 @@ fn last_span_of(source: &str, text: &str) -> Span {
     span_of(source, text, source.matches(text).count() - 1)
 }
 
-/// The error a program whose statements are all valid ends with: the first record
-/// declaration, here always `Address`.
-fn unsupported() -> Result<(), TypeError> {
-    Err(TypeError::UnsupportedRecord {
-        name: "Address".into(),
-        span: span_of(
-            PRELUDE,
-            "record Address {\n    city: string\n    zip: int\n}",
-            0,
-        ),
-    })
+/// What checking a program whose statements are all valid gives.
+fn accepted() -> Result<(), TypeError> {
+    Ok(())
 }
 
 fn field_mismatch(
@@ -79,7 +71,7 @@ fn field_mismatch(
 }
 
 #[test]
-fn valid_mutations_are_still_reported_as_unsupported() {
+fn valid_mutations_check_successfully() {
     for body in [
         "reassign student.age as 25",
         "reassign student.name as \"Sara\"",
@@ -107,7 +99,7 @@ fn valid_mutations_are_still_reported_as_unsupported() {
         "reassign student.age as f()",
         "reassign student.age as xs[0] + 1",
     ] {
-        assert_eq!(check_body(body), unsupported(), "{body:?}");
+        assert_eq!(check_body(body), accepted(), "{body:?}");
     }
 }
 
@@ -122,7 +114,7 @@ fn mutation_works_inside_blocks_and_functions() {
         // A record created in a block is visible in nested blocks.
         "if true {\n    assign a as Address {\n        city: \"c\"\n        zip: 1\n    }\n    while a.zip < 3 {\n        reassign a.zip as a.zip + 1\n    }\n}",
     ] {
-        assert_eq!(check_body(body), unsupported(), "{body:?}");
+        assert_eq!(check_body(body), accepted(), "{body:?}");
     }
 }
 
@@ -132,7 +124,7 @@ fn a_mutation_does_not_change_the_variables_type() {
     let source = format!(
         "{PRELUDE}reassign student.age as 1\nreassign student.address.city as \"x\"\nreassign student.gpa as 2"
     );
-    assert_eq!(checker.check_program(&parse(&source)), unsupported());
+    assert_eq!(checker.check_program(&parse(&source)), accepted());
     let type_of = |expression: &str| {
         let expression = Parser::new(tokenize(expression).unwrap())
             .parse_expression()
@@ -302,8 +294,8 @@ fn the_value_must_have_the_fields_declared_type() {
 #[test]
 fn numeric_compatibility_matches_reassignment() {
     // int widens to float...
-    assert_eq!(check_body("reassign student.gpa as 4"), unsupported());
-    assert_eq!(check_body("reassign student.gpa as n"), unsupported());
+    assert_eq!(check_body("reassign student.gpa as 4"), accepted());
+    assert_eq!(check_body("reassign student.gpa as n"), accepted());
     // ...but float never narrows to int, and neither is a bool or string.
     let source = format!("{PRELUDE}reassign student.age as 2.5");
     assert_eq!(
@@ -457,13 +449,13 @@ fn errors_come_in_source_order_with_the_rest_of_the_program() {
     ));
     assert_eq!(
         check_body("reassign student.age as 1\nreassign student.age as 2"),
-        unsupported()
+        accepted()
     );
 }
 
 #[test]
 fn plain_reassignment_behaves_as_before() {
-    assert_eq!(check_body("reassign n as 2"), unsupported());
+    assert_eq!(check_body("reassign n as 2"), accepted());
     // An unknown variable is still reported at the whole statement.
     let source = format!("{PRELUDE}reassign nobody as 1");
     assert_eq!(
@@ -491,7 +483,7 @@ fn plain_reassignment_behaves_as_before() {
             span: last_span_of(&source, "5"),
         })
     );
-    assert_eq!(check_body("reassign student as student"), unsupported());
+    assert_eq!(check_body("reassign student as student"), accepted());
     assert_eq!(check("assign a as 1\nreassign a as 2\nshow a"), Ok(()));
 }
 
@@ -543,13 +535,10 @@ fn earlier_record_validation_still_applies_with_mutation_present() {
             "{source:?}: {error:?}"
         );
     }
-    // Declarations alone, and reading fields, still end as unsupported.
+    // Declarations alone, and reading fields, are accepted.
     assert_eq!(check("record A {\n    x: int\n}"), Ok(()));
-    assert!(matches!(
-        check("record A {\n    x: string\n}"),
-        Err(TypeError::UnsupportedRecord { .. })
-    ));
-    assert_eq!(check_body("show student.name"), unsupported());
+    assert_eq!(check("record A {\n    x: string\n}"), Ok(()));
+    assert_eq!(check_body("show student.name"), accepted());
 }
 
 #[test]
@@ -599,10 +588,7 @@ fn long_chains_of_nested_mutation_are_checked() {
         source += "\n}";
     }
     let path = "v".to_owned() + &".next".repeat(depth - 1);
-    assert!(matches!(
-        check(&format!("{source}\nreassign {path}.n as 2")),
-        Err(TypeError::UnsupportedRecord { name, .. }) if name == "R0"
-    ));
+    assert_eq!(check(&format!("{source}\nreassign {path}.n as 2")), Ok(()));
     assert!(matches!(
         check(&format!("{source}\nreassign {path}.n as \"x\"")),
         Err(TypeError::FieldMismatch { detail, .. })
@@ -721,8 +707,8 @@ fn diagnostics_render_clearly_and_produce_no_executable() {
             vec!["Invalid assignment target".to_owned()],
         ),
         (
-            "reassign student.age as 25",
-            vec!["Record 'Address' cannot be compiled yet".to_owned()],
+            "show student",
+            vec!["Records do not support printing a record yet".to_owned()],
         ),
     ] {
         let source = format!("{PRELUDE}{body}");

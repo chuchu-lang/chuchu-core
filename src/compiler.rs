@@ -143,11 +143,6 @@ impl fmt::Display for CompileError {
                     "Function {name:?} must return a value on all paths at {}..{}",
                     span.start, span.end
                 ),
-                TypeError::UnsupportedRecord { name, span } => write!(
-                    f,
-                    "Record {name:?} has fields that are not supported yet at {}..{}",
-                    span.start, span.end
-                ),
                 TypeError::UnsupportedRecordUse { feature, span } => write!(
                     f,
                     "Records do not support {feature} yet at {}..{}",

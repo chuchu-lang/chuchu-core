@@ -194,63 +194,38 @@ fn record_is_not_valid_where_an_expression_is_expected() {
 }
 
 #[test]
-fn declarations_with_unsupported_fields_are_rejected_before_code_generation() {
-    let statements = parse("record P {\n    s: string\n}").unwrap();
-    assert_eq!(
-        TypeChecker::new(SymbolTable::new()).check_program(&statements),
-        Err(TypeError::UnsupportedRecord {
-            name: "P".into(),
-            span: Span { start: 0, end: 26 },
-        })
-    );
-    // Even when it follows valid statements, so a program is never half-compiled.
-    let statements = parse("show 1\nrecord P {\n    s: string\n}").unwrap();
-    assert!(matches!(
-        TypeChecker::new(SymbolTable::new()).check_program(&statements),
-        Err(TypeError::UnsupportedRecord { .. })
-    ));
-    // A declaration whose fields are all int, float, or bool is compilable.
-    let statements = parse("record P {\n    x: int\n}").unwrap();
-    assert_eq!(
-        TypeChecker::new(SymbolTable::new()).check_program(&statements),
-        Ok(())
-    );
+fn declarations_are_accepted_by_the_checker() {
+    for source in [
+        "record P {\n    s: string\n}",
+        "show 1\nrecord P {\n    s: string\n}",
+        "record P {\n    x: int\n}",
+    ] {
+        let statements = parse(source).unwrap();
+        assert_eq!(
+            TypeChecker::new(SymbolTable::new()).check_program(&statements),
+            Ok(()),
+            "{source:?}"
+        );
+    }
 }
 
 #[test]
-fn compiling_a_record_produces_a_clear_error_and_no_executable() {
+fn compiling_an_invalid_record_produces_a_clear_error_and_no_executable() {
     let directory = std::env::temp_dir().join(format!("cheeku record {}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let output = directory.join("program");
-    let source = "show 1\nrecord Student {\n    name: string\n}\nshow 2";
+    let source = "show 1\nrecord Student {\n    name: string\n    name: int\n}\nshow 2";
     let error = compile_source(source, &output).unwrap_err();
     assert!(matches!(
         error,
-        CompileError::Type(TypeError::UnsupportedRecord { .. })
+        CompileError::Type(TypeError::DuplicateField { .. })
     ));
     assert!(!output.exists());
     let diagnostic = render(&error, Path::new("students.chuchu"), source);
     assert!(
-        diagnostic.contains("Record 'Student' cannot be compiled yet"),
+        diagnostic.contains("Duplicate field 'name' in record 'Student'"),
         "{diagnostic}"
     );
-    assert!(diagnostic.contains("students.chuchu:2:1"), "{diagnostic}");
+    assert!(diagnostic.contains("students.chuchu:4:5"), "{diagnostic}");
     std::fs::remove_dir_all(&directory).unwrap();
-}
-
-#[test]
-fn parse_errors_render_with_the_expected_message() {
-    for (source, fragment) in [
-        ("record P {}", "Expected at least one field, found \"}\""),
-        (
-            "record P {\n    x: int y: int\n}",
-            "Expected newline between fields",
-        ),
-        ("record P {\n    x int\n}", "Expected ':'"),
-        ("record P {\n    x: 5\n}", "a record type name"),
-    ] {
-        let error = CompileError::Parse(parse(source).unwrap_err());
-        let diagnostic = render(&error, Path::new("p.chuchu"), source);
-        assert!(diagnostic.contains(fragment), "{source:?}\n{diagnostic}");
-    }
 }

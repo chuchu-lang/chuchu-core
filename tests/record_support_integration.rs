@@ -1,7 +1,8 @@
-//! Which record programs can be compiled (Issue #11, step 7B). Records with `int`,
-//! `float`, and `bool` fields can be created and read; everything else about records
-//! is a valid program that the checker refuses with an explicit error, so it can
-//! never reach code generation.
+//! Which record programs the checker accepts (Issue #11, steps 7B to 7F). Records
+//! can be created, copied, read, written, reassigned, passed to functions and
+//! returned from them. The one thing left that is a valid program but cannot be
+//! compiled is printing a whole record, which the checker refuses with an explicit
+//! error so it can never reach code generation.
 use chuchu::compiler::{CompileError, compile_source};
 use chuchu::diagnostic::render;
 use chuchu::lexer::tokenize;
@@ -11,8 +12,8 @@ use chuchu::token::Span;
 use chuchu::type_checker::{TypeChecker, TypeError};
 use std::path::Path;
 
-/// A supported record and a variable of it.
-const PRELUDE: &str = "record Sample {\n    count: int\n    ratio: float\n    ready: bool\n}\nassign s as Sample {\n    count: 1\n    ratio: 2.5\n    ready: true\n}\nassign n as 0\n";
+/// A record with a string field, and a variable of it.
+const PRELUDE: &str = "record Sample {\n    count: int\n    ratio: float\n    ready: bool\n    label: string\n}\nassign s as Sample {\n    count: 1\n    ratio: 2.5\n    ready: true\n    label: \"a\"\n}\nassign n as 0\n";
 
 fn parse(source: &str) -> Vec<chuchu::ast::Stmt> {
     Parser::new(tokenize(source).unwrap())
@@ -46,25 +47,49 @@ fn unsupported_use(feature: &'static str, span: Span) -> Result<(), TypeError> {
 }
 
 #[test]
-fn creating_and_reading_records_is_supported() {
+fn creating_reading_copying_writing_and_reassigning_records_is_supported() {
     for body in [
         "",
-        "show s.count\nshow s.ratio\nshow s.ready",
+        "show s.count\nshow s.ratio\nshow s.ready\nshow s.label",
+        // Copies and reassignment, including self-assignment.
+        "assign t as s\nreassign t.count as 2\nshow t.count + s.count",
+        "reassign s as s",
+        "assign t as s\nreassign t as s\nreassign s as t",
+        // Writes.
+        "reassign s.label as s.label + \"b\"",
+        "reassign s.ratio as 3",
         // Reads take part in ordinary expressions and statements.
         "assign x as s.count + 1\nreassign n as s.count * 2\nshow x + n",
-        "if s.ready {\n    show s.count\n}",
+        "if s.ready {\n    show s.label\n}",
         "while n < s.count {\n    reassign n as n + 1\n}",
-        "assign xs as [s.count, 2, 3]\nshow xs[s.count]",
-        "function twice(k: int) be int {\n    return k * 2\n}\nshow twice(s.count)",
-        // Initializers: temporaries, in blocks and functions, and values read from
-        // other records.
-        "show Sample {\n    count: 5\n    ratio: 0.5\n    ready: false\n}.count",
-        "assign t as Sample {\n    count: s.count\n    ratio: s.count\n    ready: s.ready\n}\nshow t.ratio",
-        "if true {\n    assign t as Sample {\n        count: 1\n        ratio: 1.0\n        ready: true\n    }\n    show t.count\n}",
-        "function f() be int {\n    assign t as Sample {\n        count: 4\n        ratio: 1.0\n        ready: true\n    }\n    return t.count\n}\nshow f()",
+        // Initializers: temporaries, in blocks, and values read from other records.
+        "show Sample {\n    count: 5\n    ratio: 0.5\n    ready: false\n    label: \"b\"\n}.label",
+        "assign t as Sample {\n    count: s.count\n    ratio: s.count\n    ready: s.ready\n    label: s.label\n}\nshow t.ratio",
+        "if true {\n    assign t as s\n    show t.count\n}",
     ] {
         assert_eq!(check_body(body), Ok(()), "{body:?}");
     }
+}
+
+#[test]
+fn functions_may_take_and_return_records() {
+    for body in [
+        "function f(r: Sample) be int {\n    return r.count\n}\nshow f(s)",
+        "function g() be Sample {\n    return Sample {\n        count: 1\n        ratio: 1.0\n        ready: true\n        label: \"g\"\n    }\n}\nshow g().label\nassign t as g()\nreassign s as g()",
+        "function h(r: Sample) be Sample {\n    reassign r.count as r.count + 1\n    return r\n}\nassign t as h(s)\nshow t.count",
+        "function two(a: Sample, b: Sample) be int {\n    return a.count + b.count\n}\nshow two(s, s)",
+        // A record parameter next to others, and a record built from parameters.
+        "function make(c: int, l: string) be Sample {\n    assign r as Sample {\n        count: c\n        ratio: 0.0\n        ready: false\n        label: l\n    }\n    return r\n}\nshow make(3, \"x\").count",
+    ] {
+        assert_eq!(check_body(body), Ok(()), "{body:?}");
+    }
+    // The function may be declared after its use, and the record after both.
+    assert_eq!(
+        check(
+            "show f(P {\n    x: 1\n}).x\nfunction f(p: P) be P {\n    return p\n}\nrecord P {\n    x: int\n}"
+        ),
+        Ok(())
+    );
 }
 
 #[test]
@@ -76,78 +101,15 @@ fn a_record_may_be_used_before_its_declaration() {
 }
 
 #[test]
-fn fields_other_than_int_float_and_bool_are_not_supported() {
-    for (source, name, declaration) in [
-        (
-            "record N {\n    name: string\n    n: int\n}",
-            "N",
-            "record N {\n    name: string\n    n: int\n}",
-        ),
-        (
-            "record Inner {\n    n: int\n}\nrecord Outer {\n    inner: Inner\n}",
-            "Outer",
-            "record Outer {\n    inner: Inner\n}",
-        ),
-        // The first unsupported declaration is reported, not the first record.
-        (
-            "record A {\n    x: int\n}\nrecord B {\n    s: string\n}\nrecord C {\n    t: string\n}",
-            "B",
-            "record B {\n    s: string\n}",
-        ),
-        // A record that is never used is refused all the same.
-        (
-            "show 1\nrecord N {\n    s: string\n}\nshow 2",
-            "N",
-            "record N {\n    s: string\n}",
-        ),
-    ] {
-        let start = source.find(declaration).unwrap();
-        assert_eq!(
-            check(source),
-            Err(TypeError::UnsupportedRecord {
-                name: name.into(),
-                span: Span {
-                    start,
-                    end: start + declaration.len()
-                },
-            }),
-            "{source:?}"
-        );
-    }
-}
-
-#[test]
-fn operations_on_whole_records_are_not_supported_yet() {
-    let source = format!("{PRELUDE}assign t as s");
-    assert_eq!(
-        check(&source),
-        unsupported_use("copying a record", last_span_of(&source, "s"))
-    );
-    let source = format!(
-        "{PRELUDE}reassign s as Sample {{\n    count: 2\n    ratio: 1.0\n    ready: false\n}}"
-    );
-    assert_eq!(
-        check(&source),
-        unsupported_use(
-            "reassigning a record variable",
-            Span {
-                start: source.rfind("reassign").unwrap(),
-                end: source.len()
-            }
-        )
-    );
-    let source = format!("{PRELUDE}reassign s.count as 5");
-    assert_eq!(
-        check(&source),
-        unsupported_use("assigning a record field", last_span_of(&source, "s.count"))
-    );
+fn printing_a_whole_record_is_not_supported_yet() {
     let source = format!("{PRELUDE}show s");
     assert_eq!(
         check(&source),
         unsupported_use("printing a record", last_span_of(&source, "s"))
     );
-    let source =
-        format!("{PRELUDE}show Sample {{\n    count: 1\n    ratio: 1.0\n    ready: true\n}}");
+    let source = format!(
+        "{PRELUDE}show Sample {{\n    count: 1\n    ratio: 1.0\n    ready: true\n    label: \"x\"\n}}"
+    );
     assert_eq!(
         check(&source),
         unsupported_use(
@@ -158,44 +120,33 @@ fn operations_on_whole_records_are_not_supported_yet() {
             }
         )
     );
-}
-
-#[test]
-fn unsupported_operations_are_found_inside_functions_and_blocks() {
-    for (body, feature) in [
-        ("if true {\n    assign t as s\n}", "copying a record"),
-        (
-            "while false {\n    reassign s.count as 1\n}",
-            "assigning a record field",
-        ),
-        (
-            "function f() be int {\n    assign t as Sample {\n        count: 1\n        ratio: 1.0\n        ready: true\n    }\n    show t\n    return 1\n}",
-            "printing a record",
-        ),
-        (
-            "function f() be int {\n    assign t as Sample {\n        count: 1\n        ratio: 1.0\n        ready: true\n    }\n    reassign t.count as 2\n    return 1\n}",
-            "assigning a record field",
-        ),
+    // Inside functions and blocks too.
+    for body in [
+        "if true {\n    show s\n}",
+        "function f(r: Sample) be int {\n    show r\n    return 1\n}",
     ] {
         let error = check_body(body).unwrap_err();
         assert!(
-            matches!(&error, TypeError::UnsupportedRecordUse { feature: found, .. } if *found == feature),
+            matches!(
+                &error,
+                TypeError::UnsupportedRecordUse {
+                    feature: "printing a record",
+                    ..
+                }
+            ),
             "{body:?}: {error:?}"
         );
     }
 }
 
 #[test]
-fn real_errors_take_precedence_over_unsupported_operations() {
-    // The unsupported operation is remembered, and an actual error after it wins.
+fn real_errors_take_precedence_over_unsupported_printing() {
+    // Printing is remembered, and an actual error after it wins.
     for (body, expected) in [
-        ("assign t as s\nshow missing", "UndefinedVariable"),
+        ("show s\nshow missing", "UndefinedVariable"),
         ("show s\nshow s.nope", "UnknownField"),
-        (
-            "reassign s.count as 1\nshow s.count.x",
-            "FieldAccessOnNonRecord",
-        ),
-        ("assign t as s\nreassign n as \"text\"", "Mismatch"),
+        ("show s\nshow s.count.x", "FieldAccessOnNonRecord"),
+        ("show s\nreassign n as \"text\"", "Mismatch"),
     ] {
         let error = check_body(body).unwrap_err();
         assert!(
@@ -203,74 +154,52 @@ fn real_errors_take_precedence_over_unsupported_operations() {
             "{body:?}: {error:?}"
         );
     }
-    // An error inside the unsupported statement itself is reported as that error.
-    assert!(matches!(
-        check_body("reassign s.count as \"text\""),
-        Err(TypeError::FieldMismatch { .. })
-    ));
-    assert!(matches!(
-        check_body("reassign s.nope as 1"),
-        Err(TypeError::UnknownField { .. })
-    ));
-    assert!(matches!(
-        check_body("reassign s as 5"),
-        Err(TypeError::RecordMismatch { .. })
-    ));
-}
-
-#[test]
-fn the_first_unsupported_feature_in_source_order_is_reported() {
-    // A use before a later unsupported declaration.
-    let source = format!("{PRELUDE}show s\nrecord N {{\n    name: string\n}}");
-    assert!(matches!(
+    // The first unsupported print in source order is reported.
+    let source = format!("{PRELUDE}show s\nassign t as s\nshow t");
+    assert_eq!(
         check(&source),
-        Err(TypeError::UnsupportedRecordUse {
-            feature: "printing a record",
-            ..
-        })
-    ));
-    // A declaration before a later unsupported use.
-    let source = format!("record N {{\n    name: string\n}}\n{PRELUDE}show s");
-    assert!(matches!(
-        check(&source),
-        Err(TypeError::UnsupportedRecord { name, .. }) if name == "N"
-    ));
-    // Of several unsupported uses, the first.
-    assert!(matches!(
-        check_body("assign t as s\nshow s"),
-        Err(TypeError::UnsupportedRecordUse {
-            feature: "copying a record",
-            ..
-        })
-    ));
+        unsupported_use(
+            "printing a record",
+            Span {
+                start: source.find("show s").unwrap() + 5,
+                end: source.find("show s").unwrap() + 6
+            }
+        )
+    );
 }
 
 #[test]
 fn a_statement_checked_on_its_own_is_never_silently_accepted() {
-    // Outside `check_program` there is no end of program to report at, so an
-    // unsupported operation is returned at once rather than remembered.
+    // Outside `check_program` there is no end of program to report at, so the
+    // unsupported print is returned at once rather than remembered.
     let mut checker = TypeChecker::new(SymbolTable::new());
     checker.check_program(&parse(PRELUDE)).unwrap();
-    for (text, feature) in [
-        ("show s", "printing a record"),
-        ("assign t as s", "copying a record"),
-        ("reassign s.count as 1", "assigning a record field"),
+    let statements = parse("show s");
+    let result = checker.check_statement(&statements[0]);
+    assert!(
+        matches!(
+            &result,
+            Err(TypeError::UnsupportedRecordUse {
+                feature: "printing a record",
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    // Supported statements are accepted.
+    for text in [
+        "show s.count",
+        "assign t as s",
+        "reassign s.count as 1",
+        "reassign s as s",
     ] {
         let statements = parse(text);
-        let result = checker.check_statement(&statements[0]);
-        assert!(
-            matches!(&result, Err(TypeError::UnsupportedRecordUse { feature: found, .. })
-                if *found == feature),
-            "{text:?}: {result:?}"
-        );
+        assert_eq!(checker.check_statement(&statements[0]), Ok(()), "{text:?}");
     }
-    // A supported statement is accepted.
-    let statements = parse("show s.count");
-    assert_eq!(checker.check_statement(&statements[0]), Ok(()));
 }
 
 #[test]
-fn an_unsupported_use_does_not_leak_into_the_next_program() {
+fn an_unsupported_print_does_not_leak_into_the_next_program() {
     let mut checker = TypeChecker::new(SymbolTable::new());
     assert!(
         checker
@@ -283,7 +212,7 @@ fn an_unsupported_use_does_not_leak_into_the_next_program() {
 }
 
 #[test]
-fn the_record_metadata_is_available_for_programs_with_unsupported_uses() {
+fn the_record_metadata_is_available_for_programs_with_unsupported_prints() {
     // Validation succeeded, so the table exists even though the program is refused.
     let mut checker = TypeChecker::new(SymbolTable::new());
     assert!(
@@ -295,81 +224,37 @@ fn the_record_metadata_is_available_for_programs_with_unsupported_uses() {
 }
 
 #[test]
-fn unsupported_operations_are_explained_clearly_and_produce_no_executable() {
+fn printing_a_record_is_explained_clearly_and_produces_no_executable() {
     let directory =
         std::env::temp_dir().join(format!("cheeku record support {}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let output = directory.join("program");
     let line = PRELUDE.lines().count() + 1;
-    for (body, fragments) in [
-        (
-            "assign t as s",
-            vec![
-                "Records do not support copying a record yet".to_owned(),
-                format!("p.chuchu:{line}:13"),
-                "this operation on a record cannot be compiled yet".to_owned(),
-                "help: Records can be created with an initializer and read with 'variable.field'"
-                    .to_owned(),
-            ],
+    let source = format!("{PRELUDE}show s");
+    let error = compile_source(&source, &output).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            CompileError::Type(TypeError::UnsupportedRecordUse { .. })
         ),
-        (
-            "show s",
-            vec![
-                "Records do not support printing a record yet".to_owned(),
-                format!("p.chuchu:{line}:6"),
-            ],
-        ),
-        (
-            "reassign s.count as 5",
-            vec![
-                "Records do not support assigning a record field yet".to_owned(),
-                format!("p.chuchu:{line}:10"),
-            ],
-        ),
-        (
-            "reassign s as s",
-            vec!["Records do not support reassigning a record variable yet".to_owned()],
-        ),
+        "{error:?}"
+    );
+    let diagnostic = render(&error, Path::new("p.chuchu"), &source);
+    for fragment in [
+        "Records do not support printing a record yet".to_owned(),
+        format!("p.chuchu:{line}:6"),
+        "this operation on a record cannot be compiled yet".to_owned(),
+        "help: Print the fields of the record instead, such as 'show student.age'".to_owned(),
     ] {
-        let source = format!("{PRELUDE}{body}");
-        let error = compile_source(&source, &output).unwrap_err();
-        assert!(
-            matches!(
-                &error,
-                CompileError::Type(TypeError::UnsupportedRecordUse { .. })
-            ),
-            "{body:?}: {error:?}"
-        );
-        let diagnostic = render(&error, Path::new("p.chuchu"), &source);
-        for fragment in fragments {
-            assert!(diagnostic.contains(&fragment), "{fragment}\n{diagnostic}");
-        }
-        assert!(!output.exists(), "{body:?}");
+        assert!(diagnostic.contains(&fragment), "{fragment}\n{diagnostic}");
     }
+    assert!(!output.exists());
     // The plain message, used where there is no source to render.
-    let error = compile_source(&format!("{PRELUDE}show s"), &output).unwrap_err();
     assert!(
         error
             .to_string()
             .starts_with("Records do not support printing a record yet at "),
         "{error}"
     );
-    // A record with fields that are not supported.
-    let source = "record N {\n    name: string\n}";
-    let error = compile_source(source, &output).unwrap_err();
-    let diagnostic = render(&error, Path::new("p.chuchu"), source);
-    for fragment in [
-        "Record 'N' cannot be compiled yet",
-        "this record has a field type that is not supported yet",
-        "help: Records currently support only int, float, and bool fields.",
-    ] {
-        assert!(diagnostic.contains(fragment), "{fragment}\n{diagnostic}");
-    }
-    assert!(
-        error
-            .to_string()
-            .starts_with("Record \"N\" has fields that are not supported yet at ")
-    );
-    assert!(!output.exists());
     std::fs::remove_dir_all(&directory).unwrap();
 }

@@ -20,7 +20,7 @@ mod results;
 mod runtime;
 mod strings;
 use super::records::RecordLayouts;
-use crate::ast::{BinaryOperator as Op, Expr, ExprKind, Stmt, StmtKind};
+use crate::ast::{BinaryOperator as Op, Expr, ExprKind, FieldType, Stmt, StmtKind};
 use crate::records::RecordTable;
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, ScalarType, Type};
@@ -144,6 +144,7 @@ pub(super) fn generate_with_records<'ctx>(
             name,
             parameters,
             return_type,
+            return_span,
             ..
         } = &statement.kind
         {
@@ -155,11 +156,17 @@ pub(super) fn generate_with_records<'ctx>(
                     span: statement.span,
                 });
             }
-            let params = parameters
+            let parameter_types = parameters
                 .iter()
-                .map(|p| generator.llvm_type(p.ty, p.span).map(Into::into))
+                .map(|p| generator.annotation_type(&p.ty, p.ty_span))
                 .collect::<Result<Vec<_>, _>>()?;
-            let result_type = generator.llvm_type(*return_type, statement.span)?;
+            let return_type = generator.annotation_type(return_type, *return_span)?;
+            let params = parameter_types
+                .iter()
+                .zip(parameters)
+                .map(|(ty, p)| generator.llvm_type(*ty, p.span).map(Into::into))
+                .collect::<Result<Vec<_>, _>>()?;
+            let result_type = generator.llvm_type(return_type, statement.span)?;
             let value = generator.module.add_function(
                 &format!("chuchu.{name}"),
                 result_type.fn_type(&params, false),
@@ -169,8 +176,8 @@ pub(super) fn generate_with_records<'ctx>(
                 name.clone(),
                 Function {
                     value,
-                    parameters: parameters.iter().map(|p| p.ty).collect(),
-                    result: *return_type,
+                    parameters: parameter_types,
+                    result: return_type,
                 },
             );
         }
@@ -179,15 +186,17 @@ pub(super) fn generate_with_records<'ctx>(
         if let StmtKind::Function {
             name,
             parameters,
-            return_type,
             body,
+            ..
         } = &statement.kind
         {
-            let function = generator
+            let signature = generator
                 .functions
                 .get(name)
                 .ok_or(invalid("Missing function declaration", statement.span))?
-                .value;
+                .clone();
+            let function = signature.value;
+            let return_type = &signature.result;
             generator.scopes = vec![HashMap::new()];
             generator.result = *return_type;
             generator
@@ -198,7 +207,8 @@ pub(super) fn generate_with_records<'ctx>(
                 let result = generator.llvm_type(*return_type, statement.span)?;
                 let params = parameters
                     .iter()
-                    .map(|p| generator.llvm_type(p.ty, p.span).map(|llvm| (p.ty, llvm)))
+                    .zip(&signature.parameters)
+                    .map(|(p, ty)| generator.llvm_type(*ty, p.span).map(|llvm| (*ty, llvm)))
                     .collect::<Result<Vec<_>, _>>()?;
                 if let Some(debug) = &mut generator.debug {
                     debug.function(
@@ -210,7 +220,8 @@ pub(super) fn generate_with_records<'ctx>(
                     )?;
                 }
             }
-            for (index, parameter) in parameters.iter().enumerate() {
+            for (index, (parameter, ty)) in parameters.iter().zip(&signature.parameters).enumerate()
+            {
                 let value = function
                     .get_nth_param(
                         u32::try_from(index)
@@ -221,7 +232,7 @@ pub(super) fn generate_with_records<'ctx>(
                     &parameter.name,
                     Value {
                         raw: value,
-                        ty: parameter.ty,
+                        ty: *ty,
                     },
                     parameter.span,
                     Some(
@@ -330,6 +341,18 @@ impl<'ctx> Generator<'ctx> {
                     .into()
             }
         })
+    }
+    /// The type a parameter or return annotation names; a record name is looked up
+    /// among the program's record layouts.
+    fn annotation_type(&self, ty: &FieldType, span: Span) -> Result<Type, CodegenError> {
+        match ty {
+            FieldType::Builtin(ty) => Ok(*ty),
+            FieldType::Named(name) => self
+                .records
+                .by_name(name)
+                .map(|layout| Type::Record(layout.id()))
+                .ok_or(invalid("Record type has no layout", span)),
+        }
     }
     fn function(&self, span: Span) -> Result<FunctionValue<'ctx>, CodegenError> {
         self.builder
@@ -528,13 +551,8 @@ impl<'ctx> Generator<'ctx> {
                     )?,
                     ty: binding.ty,
                 };
-                if value.ty == Type::String {
-                    self.copy_string(value, span)
-                } else if value.ty == Type::Result(ScalarType::String) {
-                    self.copy_result(value, span)
-                } else {
-                    Ok(value)
-                }
+                // Reading a variable gives an independent copy of what it owns.
+                self.copy_value(value, span)
             }
             ExprKind::Negate(inner) => {
                 if let ExprKind::Integer(literal) = &inner.kind
@@ -940,20 +958,11 @@ impl<'ctx> Generator<'ctx> {
                         span,
                     });
                 }
-                // A record variable is created from an initializer; copying one is
-                // not supported yet, so a record value from anything else is refused.
-                let initializer = matches!(value.kind, ExprKind::RecordInit { .. });
                 let value = self.expression(value)?;
-                if matches!(value.ty, Type::Record(_)) && !initializer {
-                    return Err(invalid("Record copying is unsupported", span));
-                }
                 self.declare(name, value, span, None)
             }
             StmtKind::Assign { name, value } => {
                 let binding = self.lookup(name, span)?;
-                if matches!(binding.ty, Type::Record(_)) {
-                    return Err(invalid("Record reassignment is unsupported", span));
-                }
                 let value = self.expression(value)?;
                 let value = self.cast(value, binding.ty, span)?;
                 self.release_binding(binding, span)?;
@@ -1038,9 +1047,7 @@ impl<'ctx> Generator<'ctx> {
             }
             StmtKind::Function { .. } => Err(invalid("Nested functions are unsupported", span)),
             StmtKind::Record { .. } => Err(invalid("Record declarations are unsupported", span)),
-            StmtKind::AssignField { .. } => {
-                Err(invalid("Record field assignment is unsupported", span))
-            }
+            StmtKind::AssignField { target, value } => self.assign_field(target, value, span),
         }
     }
 }

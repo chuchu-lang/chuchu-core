@@ -60,6 +60,32 @@ if is_ok(settings) {
 See [file I/O](FILES.md) for paths, error codes, ownership and limitations, and
 the [runnable example](examples/files.chuchu).
 
+## Records
+
+Group fields into a value with `record`, create one with an initializer, and read
+and write its fields with `.`. Records hold `int`, `float`, `bool`, `string` and
+other records, behave as independent values when copied, and can be passed to and
+returned from functions:
+
+```chuchu
+record Student {
+    name: string
+    age: int
+}
+
+assign ali as Student {
+    name: "Ali"
+    age: 22
+}
+assign copy as ali
+reassign copy.name as "Sara"
+show ali.name
+show copy.name
+```
+
+See [records](RECORDS.md) for syntax, copy and ownership rules, functions and
+limitations, and the [runnable example](examples/records.chuchu).
+
 ## Functions
 
 Use `be` before a function's return type:

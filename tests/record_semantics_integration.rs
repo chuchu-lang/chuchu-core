@@ -29,47 +29,18 @@ fn span_of(source: &str, text: &str, occurrence: usize) -> Span {
     }
 }
 
-fn unsupported(name: &str, span: Span) -> Result<(), TypeError> {
-    Err(TypeError::UnsupportedRecord {
-        name: name.into(),
-        span,
-    })
-}
-
 #[test]
-fn records_with_unsupported_fields_are_reported_as_unsupported() {
-    // Only int, float, and bool fields can be compiled; strings and nested records
-    // are valid declarations that are not supported yet.
-    for (source, name, declaration) in [
-        (
-            "record Student {\n    name: string\n    age: int\n}",
-            "Student",
-            "record Student {\n    name: string\n    age: int\n}",
-        ),
-        // Named types that resolve (the type is declared) are valid.
-        (
-            "record Course {\n    teacher: Student\n}\nrecord Student {\n    name: string\n}",
-            "Course",
-            "record Course {\n    teacher: Student\n}",
-        ),
-        // The first unsupported declaration is the one reported, not the first record.
-        (
-            "record A {\n    x: int\n}\nrecord B {\n    s: string\n}",
-            "B",
-            "record B {\n    s: string\n}",
-        ),
+fn records_with_string_and_record_fields_check_successfully() {
+    for source in [
+        "record Student {\n    name: string\n    age: int\n}",
+        // Named types that resolve (the type is declared) are valid, in either order.
+        "record Course {\n    teacher: Student\n}\nrecord Student {\n    name: string\n}",
+        "record Student {\n    name: string\n}\nrecord Course {\n    teacher: Student\n}",
+        "record A {\n    x: int\n}\nrecord B {\n    s: string\n}",
         // A record after other valid statements.
-        (
-            "show 1\nrecord P {\n    s: string\n}\nshow 2",
-            "P",
-            "record P {\n    s: string\n}",
-        ),
+        "show 1\nrecord P {\n    s: string\n}\nshow 2",
     ] {
-        assert_eq!(
-            check(source),
-            unsupported(name, span_of(source, declaration, 0)),
-            "{source:?}"
-        );
+        assert_eq!(check(source), Ok(()), "{source:?}");
     }
 }
 
@@ -286,13 +257,8 @@ fn diagnostics_render_with_clear_messages_and_no_executable() {
             ],
         ),
         (
-            "record P {\n    s: string\n}",
-            vec![
-                "Record 'P' cannot be compiled yet",
-                "p.chuchu:1:1",
-                "this record has a field type that is not supported yet",
-                "help: Records currently support only int, float, and bool fields.",
-            ],
+            "record P {\n    x: int\n}\nrecord P {\n    s: string\n}",
+            vec!["Record 'P' is already declared", "p.chuchu:4:1"],
         ),
     ] {
         let error = compile_source(source, &output).unwrap_err();
@@ -323,10 +289,7 @@ fn check_statement_applies_the_same_placement_rule_when_called_directly() {
         TypeChecker::new(SymbolTable::new()).check_statement(&statements[0])
     };
     assert_eq!(direct("record P {\n    x: int\n}"), Ok(()));
-    assert!(matches!(
-        direct("record P {\n    s: string\n}"),
-        Err(TypeError::UnsupportedRecord { .. })
-    ));
+    assert_eq!(direct("record P {\n    s: string\n}"), Ok(()));
     assert!(matches!(
         direct("function f() be int {\n    record P {\n        x: int\n    }\n    return 1\n}"),
         Err(TypeError::RecordNotTopLevel { .. })

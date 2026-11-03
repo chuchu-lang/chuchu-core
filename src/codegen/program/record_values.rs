@@ -1,9 +1,11 @@
-//! Lowering of record initializers and field reads for records whose fields are
-//! `int`, `float`, or `bool`. A record value is an LLVM struct value of the record's
-//! layout, built with `insertvalue` and read with `extractvalue`, so it is a plain
-//! value: copies cannot alias, and nothing is allocated or needs cleanup.
+//! Lowering of record initializers, field reads, and field writes. A record value
+//! is an LLVM struct value of the record's layout, built with `insertvalue`. A
+//! variable keeps it in one stack slot, and a field of a variable is addressed in
+//! place with `getelementptr`, so reading or writing one field never copies or
+//! touches the others. Strings in fields are owned allocations: a record that
+//! holds them is copied and released field by field (see `strings.rs`).
 use super::*;
-use crate::ast::FieldInit;
+use crate::ast::{FieldInit, FieldTarget};
 
 impl<'ctx> Generator<'ctx> {
     /// Lowers `Name { field: value ... }`. Field values are evaluated in the order
@@ -56,14 +58,68 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    /// Lowers `object.field` by reading one element of the object's struct value.
-    /// The object may be a record variable or a temporary such as an initializer.
+    /// The address and type of a place that can be read or written in place: a
+    /// variable, or a field of a place. `None` for anything else, such as a call
+    /// result or an initializer, which exists only as a temporary value.
+    fn place(&mut self, expr: &Expr) -> Result<Option<(PointerValue<'ctx>, Type)>, CodegenError> {
+        match &expr.kind {
+            ExprKind::Identifier(name) => {
+                let binding = self.lookup(name, expr.span)?;
+                Ok(Some((binding.pointer, binding.ty)))
+            }
+            ExprKind::FieldAccess { object, field } => match self.place(object)? {
+                Some((pointer, ty)) => self.field_pointer(pointer, ty, field, expr.span).map(Some),
+                None => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// The address of `field` inside the record of type `ty` stored at `pointer`,
+    /// with the field's type.
+    fn field_pointer(
+        &self,
+        pointer: PointerValue<'ctx>,
+        ty: Type,
+        field: &str,
+        span: Span,
+    ) -> Result<(PointerValue<'ctx>, Type), CodegenError> {
+        let Type::Record(id) = ty else {
+            return Err(invalid("Field access requires a record", span));
+        };
+        let layout = self
+            .records
+            .get(id)
+            .ok_or(invalid("Record type has no layout", span))?;
+        let field = layout
+            .field(field)
+            .ok_or(invalid("Record has no such field", span))?;
+        let address = build(
+            self.builder
+                .build_struct_gep(layout.struct_type(), pointer, field.index, &field.name),
+            span,
+        )?;
+        Ok((address, field.ty))
+    }
+
+    /// Lowers `object.field`. A field of a variable is read in place and only that
+    /// field is copied. A field of a temporary, such as an initializer or a call
+    /// result, is copied out of the temporary, which is then released.
     pub(super) fn field_access(
         &mut self,
         object: &Expr,
         field: &str,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
+        if let Some((pointer, ty)) = self.place(object)? {
+            let (address, field_ty) = self.field_pointer(pointer, ty, field, span)?;
+            let raw = build(
+                self.builder
+                    .build_load(self.llvm_type(field_ty, span)?, address, field),
+                span,
+            )?;
+            return self.copy_value(Value { raw, ty: field_ty }, span);
+        }
         let object = self.expression(object)?;
         let Type::Record(id) = object.ty else {
             return Err(invalid("Field access requires a record", span));
@@ -78,13 +134,35 @@ impl<'ctx> Generator<'ctx> {
             .field(field)
             .ok_or(invalid("Record has no such field", span))?
             .clone();
-        Ok(Value {
-            raw: build(
-                self.builder
-                    .build_extract_value(structure, field.index, &field.name),
-                span,
-            )?,
-            ty: field.ty,
-        })
+        let raw = build(
+            self.builder
+                .build_extract_value(structure, field.index, &field.name),
+            span,
+        )?;
+        let copy = self.copy_value(Value { raw, ty: field.ty }, span)?;
+        self.release_value(object, span)?;
+        Ok(copy)
+    }
+
+    /// Lowers `reassign variable.field... as value`. The value is evaluated first,
+    /// so it may read the field it replaces; it is an independent copy, so the
+    /// old contents of the field can then be released and the new ones stored.
+    /// Every other field of the record is left as it was.
+    pub(super) fn assign_field(
+        &mut self,
+        target: &FieldTarget,
+        value: &Expr,
+        span: Span,
+    ) -> Result<(), CodegenError> {
+        let value = self.expression(value)?;
+        let binding = self.lookup(&target.variable, target.variable_span)?;
+        let (mut pointer, mut ty) = (binding.pointer, binding.ty);
+        for field in &target.fields {
+            (pointer, ty) = self.field_pointer(pointer, ty, &field.name, field.span)?;
+        }
+        let value = self.cast(value, ty, span)?;
+        self.release_at(pointer, ty, span)?;
+        build(self.builder.build_store(pointer, value.raw), span)?;
+        Ok(())
     }
 }

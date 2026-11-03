@@ -86,8 +86,12 @@ impl BinaryOperator {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: String,
-    pub ty: Type,
+    /// The annotation as written; a record name is resolved by the type checker.
+    pub ty: FieldType,
+    /// Covers the parameter name.
     pub span: Span,
+    /// Covers the type annotation.
+    pub ty_span: Span,
 }
 
 /// The type written after a record field's `:`. Built-in types reuse [`Type`];
@@ -96,6 +100,14 @@ pub struct Parameter {
 pub enum FieldType {
     Builtin(Type),
     Named(String),
+}
+
+/// A built-in annotation compares equal to the [`Type`] it names, so code that
+/// only deals with built-in types can keep comparing against `Type` directly.
+impl PartialEq<Type> for FieldType {
+    fn eq(&self, other: &Type) -> bool {
+        matches!(self, Self::Builtin(ty) if ty == other)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,7 +174,9 @@ pub enum StmtKind {
     Function {
         name: String,
         parameters: Vec<Parameter>,
-        return_type: Type,
+        return_type: FieldType,
+        /// Covers the return type annotation.
+        return_span: Span,
         body: Vec<Stmt>,
     },
     Return(Expr),

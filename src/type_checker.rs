@@ -50,12 +50,6 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
-    /// A record declaration with a field type that cannot be compiled yet: only
-    /// `int`, `float`, and `bool` fields are supported.
-    UnsupportedRecord {
-        name: String,
-        span: Span,
-    },
     /// An operation on a record value that cannot be compiled yet.
     UnsupportedRecordUse {
         feature: &'static str,
@@ -189,17 +183,6 @@ pub struct TypeChecker {
 /// Names of the built-in types, which a record may not take.
 const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "result"];
 
-/// Whether a record can be compiled: every field is `int`, `float`, or `bool`.
-/// Strings and nested records are not laid out or lowered yet.
-fn record_is_supported(fields: &[RecordField]) -> bool {
-    fields.iter().all(|field| {
-        matches!(
-            field.ty,
-            FieldType::Builtin(Type::Int | Type::Float | Type::Bool)
-        )
-    })
-}
-
 /// A field's span runs from its name to the end of its type, so the type name is
 /// the last `type_name.len()` bytes.
 fn type_name_span(field: &RecordField, type_name: &str) -> Span {
@@ -321,49 +304,48 @@ impl TypeChecker {
         }
     }
     fn check_whole_program(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
+        let mut declared = HashSet::new();
         for stmt in statements {
-            if let StmtKind::Function {
-                name,
-                parameters,
-                return_type,
-                ..
-            } = &stmt.kind
+            if let StmtKind::Function { name, .. } = &stmt.kind
+                && (reserved_function(name)
+                    || self.functions.contains_key(name)
+                    || !declared.insert(name.as_str()))
             {
-                if reserved_function(name) || self.functions.contains_key(name) {
-                    return Err(TypeError::InvalidFunction {
-                        name: name.clone(),
-                        message: "duplicate or reserved function name",
-                        span: stmt.span,
-                    });
-                }
-                self.functions.insert(
-                    name.clone(),
-                    FunctionSignature {
-                        parameters: parameters.iter().map(|p| p.ty).collect(),
-                        result: *return_type,
-                    },
-                );
+                return Err(TypeError::InvalidFunction {
+                    name: name.clone(),
+                    message: "duplicate or reserved function name",
+                    span: stmt.span,
+                });
             }
         }
         // Record declarations are validated before any statement is checked, so a
-        // malformed declaration is reported ahead of the "not supported yet" error.
+        // malformed declaration is reported first, and so signatures can name them.
         self.unsupported_record = None;
         self.records_validated = false;
         self.validate_records(statements, true)?;
         self.resolve_record_types(statements)?;
         self.records_validated = true;
         for stmt in statements {
-            // A declaration generates no code. One with fields that cannot be compiled
-            // yet is reported only after every statement has been checked, so a bad
-            // initializer after it is not hidden.
-            if let StmtKind::Record { name, fields } = &stmt.kind {
-                if !record_is_supported(fields) {
-                    self.unsupported_record
-                        .get_or_insert_with(|| TypeError::UnsupportedRecord {
-                            name: name.clone(),
-                            span: stmt.span,
-                        });
-                }
+            if let StmtKind::Function {
+                name,
+                parameters,
+                return_type,
+                return_span,
+                ..
+            } = &stmt.kind
+            {
+                let parameters = parameters
+                    .iter()
+                    .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let result = self.annotation_type(return_type, *return_span)?;
+                self.functions
+                    .insert(name.clone(), FunctionSignature { parameters, result });
+            }
+        }
+        for stmt in statements {
+            // A declaration generates no code of its own.
+            if matches!(stmt.kind, StmtKind::Record { .. }) {
                 continue;
             }
             self.check_statement(stmt)?;
@@ -582,6 +564,21 @@ impl TypeChecker {
                 .map_or_else(|| "record".into(), Clone::clone),
         }
     }
+    /// The type a parameter or return annotation names; a record name resolves to
+    /// that record, which must be declared at the top level.
+    fn annotation_type(&self, ty: &FieldType, span: Span) -> Result<Type, TypeError> {
+        match ty {
+            FieldType::Builtin(ty) => Ok(*ty),
+            FieldType::Named(name) => self
+                .record_ids
+                .get(name)
+                .map(|&id| Type::Record(id))
+                .ok_or_else(|| TypeError::UndefinedRecord {
+                    name: name.clone(),
+                    span,
+                }),
+        }
+    }
     /// The type of a declared field; a record-typed field resolves to that record.
     fn field_type(&self, record: &str, field: &RecordField) -> Result<Type, TypeError> {
         match &field.ty {
@@ -758,16 +755,6 @@ impl TypeChecker {
         match &stmt.kind {
             StmtKind::Set { name, value } => {
                 let ty = self.infer_expression(value)?;
-                // A record variable is created from an initializer. Copying one
-                // from another record value is not supported yet.
-                if matches!(ty, Type::Record(_))
-                    && !matches!(value.kind, ExprKind::RecordInit { .. })
-                {
-                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
-                        feature: "copying a record",
-                        span: value.span,
-                    })?;
-                }
                 self.symbols
                     .declare(name.clone(), ty)
                     .map_err(|error| match error {
@@ -787,22 +774,9 @@ impl TypeChecker {
                         name: name.clone(),
                         span: stmt.span,
                     })?;
-                self.mismatch(ty, value)?;
-                if matches!(ty, Type::Record(_)) {
-                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
-                        feature: "reassigning a record variable",
-                        span: stmt.span,
-                    })?;
-                }
-                Ok(())
+                self.mismatch(ty, value)
             }
-            StmtKind::AssignField { target, value } => {
-                self.assign_field(target, value)?;
-                self.defer_unsupported(TypeError::UnsupportedRecordUse {
-                    feature: "assigning a record field",
-                    span: target.span,
-                })
-            }
+            StmtKind::AssignField { target, value } => self.assign_field(target, value),
             StmtKind::Show(expr) => {
                 let ty = self.infer_expression(expr)?;
                 if matches!(ty, Type::Result(_)) {
@@ -859,20 +833,12 @@ impl TypeChecker {
                     span: stmt.span,
                 })
             }
-            StmtKind::Record { name, fields } => {
-                if record_is_supported(fields) {
-                    Ok(())
-                } else {
-                    Err(TypeError::UnsupportedRecord {
-                        name: name.clone(),
-                        span: stmt.span,
-                    })
-                }
-            }
+            StmtKind::Record { .. } => Ok(()),
             StmtKind::Function {
                 name,
                 parameters,
                 return_type,
+                return_span,
                 body,
             } => {
                 if self.depth != 0 || self.result.is_some() {
@@ -882,12 +848,17 @@ impl TypeChecker {
                         span: stmt.span,
                     });
                 }
+                let return_type = self.annotation_type(return_type, *return_span)?;
+                let parameter_types = parameters
+                    .iter()
+                    .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let previous = std::mem::take(&mut self.symbols);
-                self.result = Some(*return_type);
+                self.result = Some(return_type);
                 let result = (|| {
-                    for parameter in parameters {
+                    for (parameter, ty) in parameters.iter().zip(parameter_types) {
                         self.symbols
-                            .declare(parameter.name.clone(), parameter.ty)
+                            .declare(parameter.name.clone(), ty)
                             .map_err(|_| TypeError::DuplicateDeclaration {
                                 name: parameter.name.clone(),
                                 span: parameter.span,

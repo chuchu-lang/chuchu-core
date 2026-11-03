@@ -38,19 +38,15 @@ fn span_of(source: &str, text: &str, occurrence: usize) -> Span {
 }
 
 /// Parses and checks a program whose record declarations are valid, and returns
-/// the statements and the metadata. The checker accepts the program, or ends with
-/// one of the errors for records that cannot be compiled yet; the metadata is
-/// available either way, because every declaration validated.
+/// the statements and the metadata. The checker accepts the program, or refuses
+/// printing a record; the metadata is available either way, because every
+/// declaration validated.
 fn checked(source: &str) -> (Vec<Stmt>, RecordTable) {
     let statements = parse(source);
     let mut checker = TypeChecker::new(SymbolTable::new());
     let result = checker.check_program(&statements);
     assert!(
-        matches!(
-            result,
-            Ok(())
-                | Err(TypeError::UnsupportedRecord { .. } | TypeError::UnsupportedRecordUse { .. })
-        ),
+        matches!(result, Ok(()) | Err(TypeError::UnsupportedRecordUse { .. })),
         "{source:?}: {result:?}"
     );
     let table = checker
@@ -411,34 +407,70 @@ fn field_indices_address_the_right_fields_in_ir() {
 }
 
 #[test]
-fn fields_other_than_int_float_and_bool_are_rejected_with_their_span() {
-    let source = "record Named {\n    name: string\n    age: int\n}";
+fn string_and_record_fields_have_layouts() {
+    let source = "record Address {\n    city: string\n    zip: int\n}\nrecord Person {\n    name: string\n    home: Address\n    age: int\n}";
     let context = Context::create();
-    let error = RecordLayouts::new(&context, &table(source)).unwrap_err();
-    assert!(
-        matches!(&error, CodegenError::InvalidType { message, span }
-            if message.contains("int, float, and bool")
-                && *span == span_of(source, "name: string", 0)),
-        "{error:?}"
+    let layouts = RecordLayouts::new(&context, &table(source)).unwrap();
+    let address = layouts.by_name("Address").unwrap();
+    assert_eq!(
+        address.struct_type().get_field_types(),
+        [
+            context
+                .ptr_type(inkwell::AddressSpace::default())
+                .as_basic_type_enum(),
+            context.i64_type().as_basic_type_enum(),
+        ]
     );
-    // A nested record is not laid out yet either.
-    let source = "record Inner {\n    n: int\n}\nrecord Outer {\n    ok: int\n    inner: Inner\n}";
-    let error = RecordLayouts::new(&context, &table(source)).unwrap_err();
-    assert!(
-        matches!(&error, CodegenError::InvalidType { span, .. }
-            if *span == span_of(source, "inner: Inner", 0)),
-        "{error:?}"
+    // A nested record is embedded by value, as that record's own struct.
+    let person = layouts.by_name("Person").unwrap();
+    assert_eq!(
+        person.struct_type().get_field_types(),
+        [
+            context
+                .ptr_type(inkwell::AddressSpace::default())
+                .as_basic_type_enum(),
+            address.struct_type().as_basic_type_enum(),
+            context.i64_type().as_basic_type_enum(),
+        ]
     );
-    // The first unsupported field in source order is the one reported.
-    let source = "record Many {\n    a: string\n    b: string\n}";
-    let error = RecordLayouts::new(&context, &table(source)).unwrap_err();
-    assert!(
-        matches!(&error, CodegenError::InvalidType { span, .. }
-            if *span == span_of(source, "a: string", 0)),
-        "{error:?}"
-    );
-    // The error reads like the other lowering errors.
-    assert!(error.to_string().contains("int, float, and bool"));
+    assert_eq!(person.field_index("home"), Some(1));
+    assert_eq!(person.field("home").unwrap().ty, Type::Record(address.id()));
+    assert!(!person.struct_type().is_opaque());
+}
+
+#[test]
+fn records_may_be_nested_in_any_declaration_order() {
+    // The embedding record is declared before, between, and after what it embeds.
+    for source in [
+        "record A {\n    b: B\n}\nrecord B {\n    c: C\n}\nrecord C {\n    n: int\n}",
+        "record C {\n    n: int\n}\nrecord B {\n    c: C\n}\nrecord A {\n    b: B\n}",
+        "record B {\n    c: C\n}\nrecord A {\n    b: B\n    c: C\n}\nrecord C {\n    n: int\n}",
+    ] {
+        let context = Context::create();
+        let layouts = RecordLayouts::new(&context, &table(source)).unwrap();
+        for layout in layouts.iter() {
+            assert!(!layout.struct_type().is_opaque(), "{source:?}");
+        }
+        // The innermost record has one field; each outer one embeds the next.
+        let a = layouts.by_name("A").unwrap().struct_type();
+        let b = layouts.by_name("B").unwrap().struct_type();
+        let c = layouts.by_name("C").unwrap().struct_type();
+        assert_eq!(c.count_fields(), 1);
+        assert_eq!(b.get_field_type_at_index(0), Some(c.as_basic_type_enum()));
+        assert_eq!(
+            a.get_field_type_at_index(0),
+            Some(b.as_basic_type_enum()),
+            "{source:?}"
+        );
+        // The module is valid, so every struct is complete and sized.
+        let module = context.create_module("nested");
+        let builder = context.create_builder();
+        let function = module.add_function("probe", context.void_type().fn_type(&[], false), None);
+        builder.position_at_end(context.append_basic_block(function, "entry"));
+        builder.build_alloca(a, "a").unwrap();
+        builder.build_return(None).unwrap();
+        module.verify().unwrap();
+    }
 }
 
 #[test]
@@ -529,44 +561,32 @@ fn declarations_need_validated_metadata() {
 }
 
 #[test]
-fn invalid_layouts_stop_generation_before_any_statement() {
-    let source = "record Named {\n    name: string\n}\nshow 1";
+fn records_with_strings_generate_valid_modules() {
+    let source = "record Named {\n    name: string\n    n: int\n}\nassign a as Named {\n    name: \"x\"\n    n: 1\n}\nshow a.name";
     let (statements, table) = checked(source);
     let context = Context::create();
-    let result = generate_program_with_records(&context, &statements, &table, None, &options());
-    assert!(matches!(
-        result,
-        Err(CodegenError::InvalidType { message, .. }) if message.contains("int, float, and bool")
-    ));
+    let module = generate_program_with_records(&context, &statements, &table, None, &options())
+        .expect("string fields are supported");
+    module.verify().unwrap();
 }
 
 #[test]
-fn code_generation_refuses_record_operations_that_are_not_supported() {
-    // The checker already rejects these; lowering refuses them too, so a program
-    // that skips the checker cannot produce a wrong executable.
+fn code_generation_refuses_what_it_cannot_lower() {
+    // The checker already rejects printing a record; lowering refuses it too, so a
+    // program that skips the checker cannot produce a wrong executable.
     let initialized = format!(
         "{SCALARS}assign s as Sample {{\n    count: 1\n    ratio: 2.5\n    ready: true\n}}\n"
     );
-    for (body, message) in [
-        ("assign t as s\n", "Record copying is unsupported"),
-        (
-            "reassign s as Sample {\n    count: 2\n    ratio: 1.0\n    ready: false\n}\n",
-            "Record reassignment is unsupported",
-        ),
-        ("show s\n", "show requires a scalar"),
-    ] {
-        let source = format!("{initialized}{body}");
-        let (statements, table) = checked(&source);
-        let context = Context::create();
-        let result = generate_program_with_records(&context, &statements, &table, None, &options());
-        assert!(
-            matches!(&result, Err(CodegenError::InvalidType { message: found, .. })
-                if *found == message),
-            "{body:?}: {:?}",
-            result.map(|_| ())
-        );
-    }
-    // Field mutation is refused by its own arm. Lower the statement directly.
+    let (statements, table) = checked(&format!("{initialized}show s\n"));
+    let context = Context::create();
+    let result = generate_program_with_records(&context, &statements, &table, None, &options());
+    assert!(
+        matches!(&result, Err(CodegenError::InvalidType { message, .. })
+            if *message == "show requires a scalar"),
+        "{:?}",
+        result.map(|_| ())
+    );
+    // A field write needs a variable to write to; without one lowering stops.
     let statements = parse("reassign s.count as 2");
     let context = Context::create();
     let result = generate_program_with_records(
@@ -577,18 +597,23 @@ fn code_generation_refuses_record_operations_that_are_not_supported() {
         &options(),
     );
     assert!(
-        matches!(&result, Err(CodegenError::InvalidType { message, .. })
-            if *message == "Record field assignment is unsupported"),
+        matches!(&result, Err(CodegenError::UndefinedVariable { name, .. }) if name == "s"),
         "{:?}",
         result.map(|_| ())
     );
-    // Initializing and reading are supported, so the same program without the
-    // unsupported operations generates.
-    let (statements, table) = checked(&format!("{initialized}show s.count\n"));
-    let context = Context::create();
-    let module = generate_program_with_records(&context, &statements, &table, None, &options())
-        .expect("initialization and field reads are supported");
-    module.verify().unwrap();
+    // Copying, reassigning, writing a field, and reading one all lower.
+    for body in [
+        "assign t as s\n",
+        "reassign s as Sample {\n    count: 2\n    ratio: 1.0\n    ready: false\n}\n",
+        "reassign s.count as 5\n",
+        "show s.count\n",
+    ] {
+        let (statements, table) = checked(&format!("{initialized}{body}"));
+        let context = Context::create();
+        let module = generate_program_with_records(&context, &statements, &table, None, &options())
+            .unwrap_or_else(|error| panic!("{body:?}: {error:?}"));
+        module.verify().unwrap();
+    }
 }
 
 #[test]
@@ -613,30 +638,21 @@ fn programs_without_records_generate_the_same_module_as_before() {
 }
 
 #[test]
-fn the_pipeline_rejects_unsupported_record_programs_before_code_generation() {
+fn the_pipeline_rejects_printing_a_record_before_code_generation() {
     let directory =
         std::env::temp_dir().join(format!("cheeku record layout {}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let output = directory.join("program");
     let initializer = "{\n    count: 1\n    ratio: 2.5\n    ready: true\n}";
     for source in [
-        // Fields that are not int, float, or bool, declared and used or not.
-        "record Named {\n    name: string\n}".to_owned(),
-        "record Inner {\n    n: int\n}\nrecord Outer {\n    inner: Inner\n}".to_owned(),
-        format!("{SCALARS}record Named {{\n    name: string\n}}"),
-        // Operations on a record that cannot be compiled yet.
-        format!("{SCALARS}assign s as Sample {initializer}\nassign t as s"),
         format!("{SCALARS}assign s as Sample {initializer}\nshow s"),
-        format!("{SCALARS}assign s as Sample {initializer}\nreassign s.count as 2"),
-        format!("{SCALARS}assign s as Sample {initializer}\nreassign s as Sample {initializer}"),
+        format!("{SCALARS}show Sample {initializer}"),
     ] {
         let error = compile_source(&source, &output).unwrap_err();
         assert!(
             matches!(
                 &error,
-                CompileError::Type(
-                    TypeError::UnsupportedRecord { .. } | TypeError::UnsupportedRecordUse { .. }
-                )
+                CompileError::Type(TypeError::UnsupportedRecordUse { .. })
             ),
             "{source:?}: {error:?}"
         );

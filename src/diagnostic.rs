@@ -273,17 +273,11 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "a path through this function has no return value".into(),
                 Some("Add a return statement for every possible path through the function.".into()),
             ),
-            TypeError::UnsupportedRecord { name, span } => (
-                *span,
-                format!("Record '{name}' cannot be compiled yet"),
-                "this record has a field type that is not supported yet".into(),
-                Some("Records currently support only int, float, and bool fields.".into()),
-            ),
             TypeError::UnsupportedRecordUse { feature, span } => (
                 *span,
                 format!("Records do not support {feature} yet"),
                 "this operation on a record cannot be compiled yet".into(),
-                Some("Records can be created with an initializer and read with 'variable.field'.".into()),
+                Some("Print the fields of the record instead, such as 'show student.age'.".into()),
             ),
             TypeError::DuplicateRecord { name, span } => (
                 *span,
