@@ -108,7 +108,7 @@ impl Parser {
                 self.advance();
                 self.require(TokenKind::Less, "'<'")?;
                 let inner = self.annotation()?;
-                let payload = ScalarType::from_type(inner).ok_or(ParseError::ExpectedToken {
+                let payload = ScalarType::from_type(&inner).ok_or(ParseError::ExpectedToken {
                     expected: "int, float, bool, or string result payload",
                     span: token.span,
                 })?;
@@ -119,9 +119,10 @@ impl Parser {
             TokenKind::Identifier(name) if name == "float" => Type::Float,
             TokenKind::Identifier(name) if name == "bool" => Type::Bool,
             TokenKind::Identifier(name) if name == "string" => Type::String,
+            TokenKind::Identifier(name) => Type::Record(name.clone()),
             _ => {
                 return Err(ParseError::ExpectedToken {
-                    expected: "int, float, bool, string, or result<T> type",
+                    expected: "type annotation",
                     span: token.span,
                 });
             }
@@ -141,13 +142,53 @@ impl Parser {
                 let end = value.span.end;
                 (StmtKind::Set { name, value }, end)
             }
-            TokenKind::Reassign => {
+            TokenKind::Record => {
                 self.advance();
                 let (name, _) = self.name()?;
+                self.require(TokenKind::LeftBrace, "'{'")?;
+                let mut fields = Vec::new();
+                self.newlines()?;
+                if !self.at(&TokenKind::RightBrace) {
+                    loop {
+                        let (field_name, span) = self.name()?;
+                        self.require(TokenKind::Colon, "':'")?;
+                        let ty = self.annotation()?;
+                        fields.push(crate::ast::RecordFieldDef {
+                            name: field_name,
+                            ty,
+                            span,
+                        });
+                        self.newlines()?;
+                        if self.at(&TokenKind::Comma) {
+                            self.advance();
+                            self.newlines()?;
+                        }
+                        if self.at(&TokenKind::RightBrace) {
+                            break;
+                        }
+                    }
+                }
+                let end = self.require(TokenKind::RightBrace, "'}'")?.span.end;
+                (StmtKind::Record { name, fields }, end)
+            }
+            TokenKind::Reassign => {
+                self.advance();
+                let target = self.parse_expression()?;
                 self.require(TokenKind::As, "'as'")?;
                 let value = self.parse_expression()?;
                 let end = value.span.end;
-                (StmtKind::Assign { name, value }, end)
+                let kind = match target.kind {
+                    ExprKind::Identifier(name) => StmtKind::Assign { name, value },
+                    ExprKind::FieldAccess { target, field } => StmtKind::AssignField {
+                        target,
+                        field,
+                        value,
+                    },
+                    _ => {
+                        return Err(ParseError::ExpectedIdentifier { span: target.span });
+                    }
+                };
+                (kind, end)
             }
             TokenKind::Show | TokenKind::Return => {
                 self.advance();
@@ -304,7 +345,7 @@ impl Parser {
             TokenKind::Err => {
                 self.require(TokenKind::Less, "'<'")?;
                 let ty = self.annotation()?;
-                let payload = ScalarType::from_type(ty).ok_or(ParseError::ExpectedToken {
+                let payload = ScalarType::from_type(&ty).ok_or(ParseError::ExpectedToken {
                     expected: "int, float, bool, or string result payload",
                     span: token.span,
                 })?;
@@ -339,10 +380,42 @@ impl Parser {
                 kind: ExprKind::Bool(token.kind == TokenKind::True),
                 span: token.span,
             },
-            TokenKind::Identifier(name) => Expr {
-                kind: ExprKind::Identifier(name),
-                span: token.span,
-            },
+            TokenKind::Identifier(name) => {
+                if self.at(&TokenKind::LeftBrace) {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    self.newlines()?;
+                    if !self.at(&TokenKind::RightBrace) {
+                        loop {
+                            let (field_name, _) = self.name()?;
+                            self.require(TokenKind::Colon, "':'")?;
+                            let val = self.parse_expression()?;
+                            fields.push((field_name, val));
+                            self.newlines()?;
+                            if self.at(&TokenKind::Comma) {
+                                self.advance();
+                                self.newlines()?;
+                            }
+                            if self.at(&TokenKind::RightBrace) {
+                                break;
+                            }
+                        }
+                    }
+                    let end = self.require(TokenKind::RightBrace, "'}'")?.span.end;
+                    Expr {
+                        kind: ExprKind::RecordInit { name, fields },
+                        span: Span {
+                            start: token.span.start,
+                            end,
+                        },
+                    }
+                } else {
+                    Expr {
+                        kind: ExprKind::Identifier(name),
+                        span: token.span,
+                    }
+                }
+            }
             TokenKind::Minus => {
                 let inner = self.binary(4)?;
                 let span = Span {
@@ -411,6 +484,20 @@ impl Parser {
                         index: Box::new(index),
                     },
                     span,
+                };
+            } else if self.at(&TokenKind::Dot) {
+                self.advance();
+                let (field, field_span) = self.name()?;
+                let start = expression.span.start;
+                expression = Expr {
+                    kind: ExprKind::FieldAccess {
+                        target: Box::new(expression),
+                        field,
+                    },
+                    span: Span {
+                        start,
+                        end: field_span.end,
+                    },
                 };
             } else {
                 break;
@@ -966,5 +1053,80 @@ mod tests {
             parser.current().map(|token| &token.kind),
             Some(&TokenKind::LeftBrace)
         );
+    }
+
+    #[test]
+    fn parses_record_declaration_instantiation_and_field_access() {
+        let source = "record Point { x: int, y: int }\nassign p as Point { x: 10, y: 20 }\nreassign p.x as 30\nshow p.x";
+        let mut parser = Parser::new(tokenize(source).unwrap());
+        let stmts = parser
+            .parse_program()
+            .expect("Record syntax should parse successfully");
+        assert_eq!(stmts.len(), 4);
+
+        // 1. Record definition
+        match &stmts[0].kind {
+            StmtKind::Record { name, fields } => {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "x");
+                assert_eq!(fields[0].ty, Type::Int);
+                assert_eq!(fields[1].name, "y");
+                assert_eq!(fields[1].ty, Type::Int);
+            }
+            _ => panic!("Expected StmtKind::Record"),
+        }
+
+        // 2. Instantiation
+        match &stmts[1].kind {
+            StmtKind::Set { name, value } => {
+                assert_eq!(name, "p");
+                match &value.kind {
+                    ExprKind::RecordInit { name, fields } => {
+                        assert_eq!(name, "Point");
+                        assert_eq!(fields.len(), 2);
+                        assert_eq!(fields[0].0, "x");
+                        assert_eq!(fields[1].0, "y");
+                    }
+                    _ => panic!("Expected RecordInit"),
+                }
+            }
+            _ => panic!("Expected StmtKind::Set"),
+        }
+
+        // 3. Field reassignment
+        match &stmts[2].kind {
+            StmtKind::AssignField {
+                target,
+                field,
+                value,
+            } => {
+                match &target.kind {
+                    ExprKind::Identifier(name) => assert_eq!(name, "p"),
+                    _ => panic!("Expected Identifier target"),
+                }
+                assert_eq!(field, "x");
+                match &value.kind {
+                    ExprKind::Integer(v) => assert_eq!(v, "30"),
+                    _ => panic!("Expected Integer value"),
+                }
+            }
+            _ => panic!("Expected StmtKind::AssignField"),
+        }
+
+        // 4. Field access
+        match &stmts[3].kind {
+            StmtKind::Show(expr) => match &expr.kind {
+                ExprKind::FieldAccess { target, field } => {
+                    match &target.kind {
+                        ExprKind::Identifier(name) => assert_eq!(name, "p"),
+                        _ => panic!("Expected Identifier target"),
+                    }
+                    assert_eq!(field, "x");
+                }
+                _ => panic!("Expected FieldAccess"),
+            },
+            _ => panic!("Expected StmtKind::Show"),
+        }
     }
 }
