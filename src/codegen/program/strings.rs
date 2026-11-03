@@ -117,7 +117,7 @@ impl<'ctx> Generator<'ctx> {
             let payload = self.result_payload(value, span)?;
             self.release_value(payload, span)?;
         } else if value.ty == Type::String {
-            let pointer = self.string_pointer(value, span)?;
+            let pointer = self.string_pointer(value.clone(), span)?;
             let free = self.external(
                 "free",
                 self.context
@@ -125,6 +125,38 @@ impl<'ctx> Generator<'ctx> {
                     .fn_type(&[pointer.get_type().into()], false),
             )?;
             build(self.builder.build_call(free, &[pointer.into()], ""), span)?;
+        } else if let Type::Record(ref name) = value.ty {
+            if let Some(rec) = self.records.get(name).cloned() {
+                let pointer = self.spill(&value, span)?;
+                for (idx, (_, fty)) in rec.fields.iter().enumerate() {
+                    if fty.owns_string() {
+                        let field_ptr = build(
+                            self.builder.build_struct_gep(
+                                rec.struct_type,
+                                pointer,
+                                idx as u32,
+                                "rec.clean.field",
+                            ),
+                            span,
+                        )?;
+                        let field_raw = build(
+                            self.builder.build_load(
+                                self.llvm_type(fty, span)?,
+                                field_ptr,
+                                "rec.field.val",
+                            ),
+                            span,
+                        )?;
+                        self.release_value(
+                            Value {
+                                raw: field_raw,
+                                ty: fty.clone(),
+                            },
+                            span,
+                        )?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -137,7 +169,7 @@ impl<'ctx> Generator<'ctx> {
         if binding.ty.owns_string() {
             let raw = build(
                 self.builder.build_load(
-                    self.llvm_type(binding.ty, span)?,
+                    self.llvm_type(&binding.ty, span)?,
                     binding.pointer,
                     "string.cleanup",
                 ),
@@ -163,7 +195,7 @@ impl<'ctx> Generator<'ctx> {
         };
         for scope in scopes.iter().rev() {
             for binding in scope.values() {
-                self.release_binding(*binding, span)?;
+                self.release_binding(binding.clone(), span)?;
             }
         }
         Ok(())
@@ -176,8 +208,8 @@ impl<'ctx> Generator<'ctx> {
         right: Value<'ctx>,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
-        let a = self.string_pointer(left, span)?;
-        let b = self.string_pointer(right, span)?;
+        let a = self.string_pointer(left.clone(), span)?;
+        let b = self.string_pointer(right.clone(), span)?;
         let result = match op {
             Op::Add => {
                 let a_len = self.string_bytes(a, span)?;
@@ -255,7 +287,7 @@ impl<'ctx> Generator<'ctx> {
         value: Value<'ctx>,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
-        let pointer = self.string_pointer(value, span)?;
+        let pointer = self.string_pointer(value.clone(), span)?;
         let function = self.function(span)?;
         let entry = self
             .builder
