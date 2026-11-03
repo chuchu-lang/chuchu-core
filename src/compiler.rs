@@ -136,6 +136,38 @@ impl fmt::Display for CompileError {
                     "Function {name:?} must return a value on all paths at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::UndefinedField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} has no field {field:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::MissingField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Missing field {field:?} in {record:?} instantiation at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::NotARecord { ty, span } => write!(
+                    f,
+                    "Type {ty:?} is not a record at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::InvalidRecord {
+                    name,
+                    message,
+                    span,
+                } => write!(
+                    f,
+                    "Invalid record {name:?}: {message} at {}..{}",
+                    span.start, span.end
+                ),
             },
             Self::Codegen(error) => error.fmt(f),
             Self::Native(error) => error.fmt(f),
@@ -293,6 +325,11 @@ fn compile_input(
     let llvm_generation = start.elapsed();
     let native =
         build_executable_with_options(&module, output, options).map_err(CompileError::Native)?;
+    #[cfg(target_os = "windows")]
+    {
+        std::mem::forget(module);
+        std::mem::forget(context);
+    }
     Ok(CompilationTimings {
         lex,
         parse,

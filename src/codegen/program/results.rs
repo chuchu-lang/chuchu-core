@@ -40,7 +40,7 @@ impl<'ctx> Generator<'ctx> {
         self.make_result(
             code,
             Value {
-                raw: self.llvm_type(ty, span)?.const_zero(),
+                raw: self.llvm_type(&ty, span)?.const_zero(),
                 ty,
             },
             span,
@@ -82,10 +82,10 @@ impl<'ctx> Generator<'ctx> {
         value: Value<'ctx>,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
-        let payload = ScalarType::from_type(value.ty)
+        let payload = ScalarType::from_type(&value.ty)
             .ok_or(invalid("Result payload must be a scalar", span))?;
         let ty = Type::Result(payload);
-        let llvm = self.llvm_type(ty, span)?.into_struct_type();
+        let llvm = self.llvm_type(&ty, span)?.into_struct_type();
         let aggregate = build(
             self.builder
                 .build_insert_value(llvm.get_undef(), code, 0, "result.status"),
@@ -107,7 +107,7 @@ impl<'ctx> Generator<'ctx> {
         value: Value<'ctx>,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
-        let code = self.result_code(value, span)?;
+        let code = self.result_code(value.clone(), span)?;
         let success = build(
             self.builder.build_int_compare(
                 IntPredicate::EQ,
@@ -162,8 +162,8 @@ impl<'ctx> Generator<'ctx> {
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
         let ty = payload.ty();
-        let llvm = self.llvm_type(ty, span)?;
-        let output = self.allocate(ty, span)?;
+        let llvm = self.llvm_type(&ty, span)?;
+        let output = self.allocate(&ty, span)?;
         build(self.builder.build_store(output, llvm.const_zero()), span)?;
         let ptr = self.context.ptr_type(AddressSpace::default());
         let parameters = vec![ptr.into(); arguments.len() + 1];
@@ -175,7 +175,7 @@ impl<'ctx> Generator<'ctx> {
         args.push(output.into());
         let status = self.call_value(function, &args, span)?.into_int_value();
         for value in arguments {
-            self.release_value(*value, span)?;
+            self.release_value(value.clone(), span)?;
         }
         let raw = build(self.builder.build_load(llvm, output, "native.result"), span)?;
         self.make_result(status, Value { raw, ty }, span)
@@ -247,7 +247,7 @@ impl<'ctx> Generator<'ctx> {
                 if name == "try_input" {
                     return Ok(result);
                 }
-                let code = self.result_code(result, span)?;
+                let code = self.result_code(result.clone(), span)?;
                 let not_eof = build(
                     self.builder.build_int_compare(
                         IntPredicate::NE,
@@ -358,14 +358,14 @@ impl<'ctx> Generator<'ctx> {
                 self.context
                     .i32_type()
                     .const_int(ErrorCode::Ok as u64, false),
-                *value,
+                value.clone(),
                 span,
             ),
-            ("to_string", [value]) => self.format_string_value(*value, span),
+            ("to_string", [value]) => self.format_string_value(value.clone(), span),
             ("is_ok" | "is_eof" | "error_code" | "error_message" | "unwrap", [value])
                 if matches!(value.ty, Type::Result(_)) =>
             {
-                let code = self.result_code(*value, span)?;
+                let code = self.result_code(value.clone(), span)?;
                 let result = match name {
                     "unwrap" => {
                         let valid = build(
@@ -384,7 +384,7 @@ impl<'ctx> Generator<'ctx> {
                         )?;
                         // The temporary result's successful payload is transferred
                         // to the caller. Do not release it after extraction.
-                        return self.result_payload(*value, span);
+                        return self.result_payload(value.clone(), span);
                     }
                     "is_ok" | "is_eof" => {
                         let expected = if name == "is_ok" {
@@ -435,7 +435,7 @@ impl<'ctx> Generator<'ctx> {
                         )?
                     }
                 };
-                self.release_value(*value, span)?;
+                self.release_value(value.clone(), span)?;
                 Ok(result)
             }
             _ => Err(invalid("Invalid input/conversion builtin arguments", span)),
@@ -482,7 +482,7 @@ impl<'ctx> Generator<'ctx> {
             Type::Float => "cheeku_to_string_float",
             _ => return Err(invalid("to_string expects a scalar", span)),
         };
-        let parameter = self.llvm_type(value.ty, span)?;
+        let parameter = self.llvm_type(&value.ty, span)?;
         let function = self.external(
             name,
             self.context

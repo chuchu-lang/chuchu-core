@@ -3,17 +3,17 @@ use super::*;
 impl<'ctx> Generator<'ctx> {
     pub(super) fn spill(
         &self,
-        value: Value<'ctx>,
+        value: &Value<'ctx>,
         span: Span,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
-        let pointer = self.allocate(value.ty, span)?;
+        let pointer = self.allocate(&value.ty, span)?;
         build(self.builder.build_store(pointer, value.raw), span)?;
         Ok(pointer)
     }
     pub(super) fn element_pointer(
         &self,
         pointer: PointerValue<'ctx>,
-        ty: Type,
+        ty: &Type,
         index: IntValue<'ctx>,
         span: Span,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
@@ -24,7 +24,7 @@ impl<'ctx> Generator<'ctx> {
         unsafe {
             build(
                 self.builder.build_gep(
-                    self.llvm_type(ty, span)?,
+                    self.llvm_type(&ty, span)?,
                     pointer,
                     &[self.context.i64_type().const_zero(), index],
                     "element.ptr",
@@ -54,7 +54,7 @@ impl<'ctx> Generator<'ctx> {
             element,
             len: values.len(),
         };
-        let pointer = self.allocate(ty, span)?;
+        let pointer = self.allocate(&ty, span)?;
         for (index, value) in values.iter().enumerate() {
             if value.ty != element.scalar() {
                 return Err(invalid("Array elements must be homogeneous", span));
@@ -63,13 +63,13 @@ impl<'ctx> Generator<'ctx> {
                 u64::try_from(index).map_err(|_| invalid("Invalid index", span))?,
                 false,
             );
-            let address = self.element_pointer(pointer, ty, index, span)?;
+            let address = self.element_pointer(pointer, &ty, index, span)?;
             build(self.builder.build_store(address, value.raw), span)?;
         }
         Ok(Value {
             raw: build(
                 self.builder
-                    .build_load(self.llvm_type(ty, span)?, pointer, "array"),
+                    .build_load(self.llvm_type(&ty, span)?, pointer, "array"),
                 span,
             )?,
             ty,
@@ -81,7 +81,7 @@ impl<'ctx> Generator<'ctx> {
         span: Span,
         mut body: impl FnMut(&mut Self, IntValue<'ctx>) -> Result<(), CodegenError>,
     ) -> Result<(), CodegenError> {
-        let counter = self.allocate(Type::Int, span)?;
+        let counter = self.allocate(&Type::Int, span)?;
         build(
             self.builder
                 .build_store(counter, self.context.i64_type().const_zero()),
@@ -141,13 +141,13 @@ impl<'ctx> Generator<'ctx> {
                 span,
             ));
         }
-        let a = self.spill(left, span)?;
-        let b = self.spill(right, span)?;
-        let result = self.allocate(left.ty, span)?;
+        let a = self.spill(&left, span)?;
+        let b = self.spill(&right, span)?;
+        let result = self.allocate(&left.ty, span)?;
         self.array_loop(len, span, |this, index| {
-            let ap = this.element_pointer(a, left.ty, index, span)?;
-            let bp = this.element_pointer(b, right.ty, index, span)?;
-            let ty = this.llvm_type(element.scalar(), span)?;
+            let ap = this.element_pointer(a, &left.ty, index, span)?;
+            let bp = this.element_pointer(b, &right.ty, index, span)?;
+            let ty = this.llvm_type(&element.scalar(), span)?;
             let a = Value {
                 raw: build(this.builder.build_load(ty, ap, "a"), span)?,
                 ty: element.scalar(),
@@ -157,14 +157,14 @@ impl<'ctx> Generator<'ctx> {
                 ty: element.scalar(),
             };
             let value = this.binary(op, a, b, span)?;
-            let out = this.element_pointer(result, left.ty, index, span)?;
+            let out = this.element_pointer(result, &left.ty, index, span)?;
             build(this.builder.build_store(out, value.raw), span)?;
             Ok(())
         })?;
         Ok(Value {
             raw: build(
                 self.builder
-                    .build_load(self.llvm_type(left.ty, span)?, result, "array.result"),
+                    .build_load(self.llvm_type(&left.ty, span)?, result, "array.result"),
                 span,
             )?,
             ty: left.ty,
@@ -178,12 +178,12 @@ impl<'ctx> Generator<'ctx> {
         let Type::Array { element, len } = array.ty else {
             return Err(invalid("sum requires an array", span));
         };
-        let pointer = self.spill(array, span)?;
-        let ty = self.llvm_type(element.scalar(), span)?;
-        let accumulator = self.allocate(element.scalar(), span)?;
+        let pointer = self.spill(&array, span)?;
+        let ty = self.llvm_type(&element.scalar(), span)?;
+        let accumulator = self.allocate(&element.scalar(), span)?;
         build(self.builder.build_store(accumulator, ty.const_zero()), span)?;
         self.array_loop(len, span, |this, index| {
-            let address = this.element_pointer(pointer, array.ty, index, span)?;
+            let address = this.element_pointer(pointer, &array.ty, index, span)?;
             let value = Value {
                 raw: build(this.builder.build_load(ty, address, "element"), span)?,
                 ty: element.scalar(),
