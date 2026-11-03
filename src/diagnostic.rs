@@ -299,6 +299,30 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "records cannot be declared inside functions or blocks".into(),
                 Some("Move the record declaration outside every function, if, and while block.".into()),
             ),
+            TypeError::ReservedRecordName { name, span } => (
+                *span,
+                format!("'{name}' is a built-in type name and cannot name a record"),
+                "reserved type name".into(),
+                Some("Choose a different name, for example a capitalized one.".into()),
+            ),
+            TypeError::UndefinedRecordType {
+                record,
+                type_name,
+                span,
+            } => (
+                *span,
+                format!("Unknown type '{type_name}' in record '{record}'"),
+                "no record with this name is declared".into(),
+                Some(format!(
+                    "Declare 'record {type_name}' at the top level, or use int, float, bool, or string."
+                )),
+            ),
+            TypeError::RecursiveRecord { path, span } => (
+                *span,
+                format!("Record '{}' contains itself: {}", path[0], path.join(" -> ")),
+                "this field makes the record infinitely large".into(),
+                Some("Records are stored by value, so a record cannot contain itself, even through other records. Break the cycle.".into()),
+            ),
         },
         _ => return None,
     };

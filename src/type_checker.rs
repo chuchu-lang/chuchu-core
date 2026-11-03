@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOperator, Expr, ExprKind, Stmt, StmtKind};
+use crate::ast::{BinaryOperator, Expr, ExprKind, FieldType, RecordField, Stmt, StmtKind};
 use crate::symbol_table::{SymbolError, SymbolTable};
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, ScalarType, Type};
@@ -64,6 +64,22 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    ReservedRecordName {
+        name: String,
+        span: Span,
+    },
+    UndefinedRecordType {
+        record: String,
+        type_name: String,
+        /// The type name written after the field's `:`.
+        span: Span,
+    },
+    RecursiveRecord {
+        /// The records in the cycle, starting and ending with the same name.
+        path: Vec<String>,
+        /// The field that closes the cycle.
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -75,9 +91,22 @@ pub struct FunctionSignature {
 pub struct TypeChecker {
     symbols: SymbolTable,
     functions: HashMap<String, FunctionSignature>,
-    records: HashSet<String>,
+    /// Declared top-level records and their fields, in any source order.
+    records: HashMap<String, Vec<RecordField>>,
     result: Option<Type>,
     depth: usize,
+}
+
+/// Names of the built-in types, which a record may not take.
+const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "result"];
+
+/// A field's span runs from its name to the end of its type, so the type name is
+/// the last `type_name.len()` bytes.
+fn type_name_span(field: &RecordField, type_name: &str) -> Span {
+    Span {
+        start: field.span.end - type_name.len(),
+        end: field.span.end,
+    }
 }
 
 pub fn reserved_function(name: &str) -> bool {
@@ -163,7 +192,7 @@ impl TypeChecker {
         Self {
             symbols,
             functions: HashMap::new(),
-            records: HashSet::new(),
+            records: HashMap::new(),
             result: None,
             depth: 0,
         }
@@ -197,6 +226,7 @@ impl TypeChecker {
         // Record declarations are validated before any statement is checked, so a
         // malformed declaration is reported ahead of the "not supported yet" error.
         self.validate_records(statements, true)?;
+        self.resolve_record_types(statements)?;
         for stmt in statements {
             self.check_statement(stmt)?;
         }
@@ -215,12 +245,19 @@ impl TypeChecker {
                             span: stmt.span,
                         });
                     }
-                    if !self.records.insert(name.clone()) {
+                    if RESERVED_TYPE_NAMES.contains(&name.as_str()) {
+                        return Err(TypeError::ReservedRecordName {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    if self.records.contains_key(name) {
                         return Err(TypeError::DuplicateRecord {
                             name: name.clone(),
                             span: stmt.span,
                         });
                     }
+                    self.records.insert(name.clone(), fields.clone());
                     let mut seen = HashSet::new();
                     for field in fields {
                         if !seen.insert(field.name.as_str()) {
@@ -244,6 +281,81 @@ impl TypeChecker {
                     self.validate_records(body, false)?;
                 }
                 _ => {}
+            }
+        }
+        Ok(())
+    }
+    /// Resolves record-typed fields against every declared record, so records may
+    /// refer to ones declared later, then rejects records that contain themselves,
+    /// directly or through other records, because a value cannot have infinite size.
+    fn resolve_record_types(&self, statements: &[Stmt]) -> Result<(), TypeError> {
+        let declared = || {
+            statements.iter().filter_map(|stmt| match &stmt.kind {
+                StmtKind::Record { name, .. } => Some(name),
+                _ => None,
+            })
+        };
+        for name in declared() {
+            for field in &self.records[name] {
+                if let FieldType::Named(type_name) = &field.ty
+                    && !self.records.contains_key(type_name)
+                {
+                    return Err(TypeError::UndefinedRecordType {
+                        record: name.clone(),
+                        type_name: type_name.clone(),
+                        span: type_name_span(field, type_name),
+                    });
+                }
+            }
+        }
+        // Depth-first search with an explicit stack, so a long chain of records
+        // cannot overflow the compiler's own stack. Every field type resolves.
+        let mut finished: HashSet<&str> = HashSet::new();
+        let mut in_progress: HashSet<&str> = HashSet::new();
+        for start in declared() {
+            if finished.contains(start.as_str()) {
+                continue;
+            }
+            let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
+            in_progress.insert(start.as_str());
+            while let Some(&mut (node, ref mut next)) = stack.last_mut() {
+                let fields = &self.records[node];
+                let Some((index, field, target)) =
+                    fields
+                        .iter()
+                        .enumerate()
+                        .skip(*next)
+                        .find_map(|(i, f)| match &f.ty {
+                            FieldType::Named(target) => Some((i, f, target.as_str())),
+                            FieldType::Builtin(_) => None,
+                        })
+                else {
+                    in_progress.remove(node);
+                    finished.insert(node);
+                    stack.pop();
+                    continue;
+                };
+                *next = index + 1;
+                if finished.contains(target) {
+                    continue;
+                }
+                if in_progress.contains(target) {
+                    let position = stack
+                        .iter()
+                        .position(|(name, _)| *name == target)
+                        .expect("an in-progress record is on the stack");
+                    let mut path: Vec<String> = stack[position..]
+                        .iter()
+                        .map(|(n, _)| (*n).to_owned())
+                        .collect();
+                    path.push(target.to_owned());
+                    return Err(TypeError::RecursiveRecord {
+                        path,
+                        span: type_name_span(field, target),
+                    });
+                }
+                in_progress.insert(target);
+                stack.push((target, 0));
             }
         }
         Ok(())

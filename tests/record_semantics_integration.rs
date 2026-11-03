@@ -60,11 +60,11 @@ fn valid_records_are_still_reported_as_unsupported() {
             "P",
             "record P {\n    x: int\n    X: int\n}",
         ),
-        // Unresolved type names are not checked in this step.
+        // Named types that resolve (the type is declared) are valid.
         (
-            "record Course {\n    teacher: Missing\n}",
+            "record Course {\n    teacher: Student\n}\nrecord Student {\n    name: string\n}",
             "Course",
-            "record Course {\n    teacher: Missing\n}",
+            "record Course {\n    teacher: Student\n}",
         ),
         // A record after other valid statements.
         (

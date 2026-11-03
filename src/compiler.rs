@@ -160,6 +160,27 @@ impl fmt::Display for CompileError {
                     "Record {name:?} must be declared at the top level at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::ReservedRecordName { name, span } => write!(
+                    f,
+                    "Record name {name:?} is a built-in type name at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::UndefinedRecordType {
+                    record,
+                    type_name,
+                    span,
+                } => write!(
+                    f,
+                    "Undefined type {type_name:?} in record {record:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::RecursiveRecord { path, span } => write!(
+                    f,
+                    "Recursive record definition {} at {}..{}",
+                    path.join(" -> "),
+                    span.start,
+                    span.end
+                ),
             },
             Self::Codegen(error) => error.fmt(f),
             Self::Native(error) => error.fmt(f),
