@@ -200,13 +200,13 @@ pub(super) fn generate_with_records<'ctx>(
             let function = signature.value;
             let return_type = &signature.result;
             generator.scopes = vec![HashMap::new()];
-            generator.result = return_type.clone();
+            generator.result = *return_type;
             generator
                 .builder
                 .position_at_end(context.append_basic_block(function, "entry"));
             generator.builder.unset_current_debug_location();
             if generator.debug.is_some() {
-                let result = generator.llvm_type(&return_type, statement.span)?;
+                let result = generator.llvm_type(return_type, statement.span)?;
                 let params = parameters
                     .iter()
                     .zip(&signature.parameters)
@@ -217,7 +217,7 @@ pub(super) fn generate_with_records<'ctx>(
                         function,
                         name,
                         statement.span,
-                        Some((return_type.clone(), result)),
+                        Some((*return_type, result)),
                         &params,
                     )?;
                 }
@@ -433,7 +433,7 @@ impl<'ctx> Generator<'ctx> {
                 name,
                 Binding {
                     pointer,
-                    ty: value.ty.clone(),
+                    ty: value.ty,
                 },
                 llvm,
                 span,
@@ -473,7 +473,7 @@ impl<'ctx> Generator<'ctx> {
                     span,
                 )?
                 .into(),
-                ty: target.clone(),
+                ty: *target,
             });
         }
         Err(invalid("Incompatible value type", span))

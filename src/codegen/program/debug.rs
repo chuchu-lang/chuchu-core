@@ -292,7 +292,7 @@ impl<'ctx> DebugState<'ctx> {
                     .as_type()
             }
         };
-        self.types.push((ty.clone(), debug));
+        self.types.push((ty, debug));
         Ok(debug)
     }
 
@@ -317,7 +317,7 @@ impl<'ctx> DebugState<'ctx> {
         };
         let params = parameters
             .iter()
-            .map(|(ty, llvm)| self.ty(ty.clone(), *llvm))
+            .map(|(ty, llvm)| self.ty(*ty, *llvm))
             .collect::<Result<Vec<_>, _>>()?;
         let signature =
             self.builder
@@ -384,7 +384,7 @@ impl<'ctx> DebugState<'ctx> {
         block: inkwell::basic_block::BasicBlock<'ctx>,
     ) -> Result<(), CodegenError> {
         let pos = self.position(span)?;
-        let ty = self.ty(binding.ty.clone(), llvm)?;
+        let ty = self.ty(binding.ty, llvm)?;
         let scope = *self
             .scopes
             .last()
