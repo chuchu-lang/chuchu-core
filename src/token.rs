@@ -23,6 +23,10 @@ pub enum TokenKind {
     Err,
     /// Record type declaration keyword: `record`.
     Record,
+    Module,
+    Import,
+    Export,
+    ColonColon,
 
     Plus,
     Minus,

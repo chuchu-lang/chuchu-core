@@ -182,3 +182,19 @@ pub enum StmtKind {
         fields: Vec<RecordField>,
     },
 }
+
+/// File-level syntax; module directives never enter executable statement lowering.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModuleSyntax {
+    pub name: Option<(String, Span)>,
+    pub imports: Vec<Import>,
+    pub exports: Vec<(String, Span)>,
+    pub statements: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    pub path: String,
+    pub alias: String,
+    pub span: Span,
+}

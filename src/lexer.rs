@@ -127,6 +127,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                 }
 
                 match &source[start..end] {
+                    "module" => TokenKind::Module,
+                    "import" => TokenKind::Import,
+                    "export" => TokenKind::Export,
                     "assign" => TokenKind::Set,
                     "as" => TokenKind::As,
                     "show" => TokenKind::Show,
@@ -247,7 +250,15 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
             '[' => TokenKind::LeftBracket,
             ']' => TokenKind::RightBracket,
             ',' => TokenKind::Comma,
-            ':' => TokenKind::Colon,
+            ':' => {
+                if let Some(&(position, ':')) = characters.peek() {
+                    characters.next();
+                    end = position + 1;
+                    TokenKind::ColonColon
+                } else {
+                    TokenKind::Colon
+                }
+            }
             // A `.` that follows digits is consumed by the number above, so this is
             // only reached for field access.
             '.' => TokenKind::Dot,
