@@ -115,22 +115,22 @@ export function add(a: int, b: int) be int {
 ```chuchu
 // main.chuchu
 use module math
-show math::add(2, 3)
+show math.add(2, 3)
 ```
 
 Compile the entry file as usual: `cheeku main.chuchu -o program`. Module access uses
-`math::name`; declarations are private unless marked `export`. Imported files
+`math.name`; declarations are private unless marked `export`. Imported files
 contain declarations rather than executable top-level statements.
 
 Each file is one module. Imported files must begin with `module name`; the entry
 file may omit it. `use module math` loads `math.chuchu` from the importing file's
 directory. No quotes, extension, or alias are needed. Use dotted names for nested
 files: `use module geometry.math` loads `geometry/math.chuchu` and makes it
-available as `math::name`. Module uses belong before declarations and executable
+available as `math.name`. Module uses belong before declarations and executable
 statements. The module declaration supplies a descriptive name.
 
 - Export functions and records with `export function` and `export record`.
-  Qualified record types and initializers also use `math::Point`.
+  Qualified record types and initializers also use `math.Point`.
 - Exported signatures and record fields must use public record types.
   Records from different modules remain distinct types, even with equal fields.
 - Used module names and top-level declarations must have unique names within their
