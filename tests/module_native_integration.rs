@@ -254,3 +254,20 @@ fn dependency_parse_errors_point_to_local_eof_with_an_import_trace() {
     assert!(stderr.contains("a.chuchu"), "{stderr}");
     assert!(stderr.contains("main.chuchu"), "{stderr}");
 }
+
+#[test]
+fn named_source_api_keeps_support_for_extensionless_entry_files() {
+    let text = "import \"a.chuchu\" as a\nshow a::value()";
+    let project = Project::new(&[
+        ("entry", text),
+        (
+            "a.chuchu",
+            "module a\nexport function value() be int {\nreturn 8\n}",
+        ),
+    ]);
+    let source = chuchu::source::SourceFile::new(project.0.join("entry"), text.into());
+    compile_named_source_with_options(&source, &project.executable(), &BuildOptions::default())
+        .unwrap();
+    let output = Command::new(project.executable()).output().unwrap();
+    assert_eq!(output.stdout, support::native_output("8\n"));
+}

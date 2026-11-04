@@ -35,6 +35,18 @@ fn error(message: impl Into<String>, span: Span) -> CompileError {
 
 impl ModuleGraph {
     pub fn load(entry: &Path) -> Result<Self, CompileError> {
+        if entry
+            .extension()
+            .is_none_or(|extension| extension != "chuchu")
+        {
+            return Err(CompileError::UnsupportedExtension(entry.to_owned()));
+        }
+        Self::load_named(entry)
+    }
+
+    /// The named-source API historically accepts any entry filename. Imported
+    /// dependencies still require `.chuchu`, just like the file-based CLI.
+    pub(crate) fn load_named(entry: &Path) -> Result<Self, CompileError> {
         let mut loader = Loader::default();
         let result = loader.load(entry, None);
         match result {
@@ -98,9 +110,10 @@ struct Loader {
 
 impl Loader {
     fn load(&mut self, path: &Path, import: Option<Span>) -> Result<usize, CompileError> {
-        if path
-            .extension()
-            .is_none_or(|extension| extension != "chuchu")
+        if import.is_some()
+            && path
+                .extension()
+                .is_none_or(|extension| extension != "chuchu")
         {
             return Err(match import {
                 Some(span) => error(

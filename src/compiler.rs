@@ -417,6 +417,7 @@ pub fn compile_named_source_with_options(
     output: &Path,
     options: &BuildOptions,
 ) -> Result<CompilationTimings, CompileError> {
+    let total = Instant::now();
     let path = identity(source.path());
     let disk = std::fs::read_to_string(&path).map_err(|source| CompileError::SourceRead {
         path: path.clone(),
@@ -431,7 +432,10 @@ pub fn compile_named_source_with_options(
             ),
         });
     }
-    compile_file_with_options(&path, output, options)
+    let graph = crate::modules::ModuleGraph::load_named(&path)?;
+    let mut timings = compile_graph(&graph, output, options, true)?;
+    timings.total = total.elapsed();
+    Ok(timings)
 }
 
 fn compile_input(
