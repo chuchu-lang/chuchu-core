@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use chuchu::optimization::{BuildOptions, Cpu, DebugInfo, InvalidOptimization, Optimization};
 
-const USAGE: &str = "Usage: cheeku <source.chuchu> [--debug|-g] [-O0|-O1|-O2|-O3] [-o <executable>] [--cpu generic|native] [--time-compilation] [--emit-ir <file>] [--emit-assembly <file>] [--no-vectorize]";
+const USAGE: &str = "Usage: cheeku <source.chuchu> [--debug|-g] [-O0|-O1|-O2|-O3] [-o <executable>] [--cpu generic|native] [--time-compilation] [--emit-ir <file>] [--emit-assembly <file>] [--no-vectorize]\n       cheeku --version";
 
 #[derive(Debug)]
 enum CliError {
@@ -120,7 +120,12 @@ fn parse_args(
     Ok(Some(invocation))
 }
 fn run() -> Result<(), CliError> {
-    let Some(invocation) = parse_args(std::env::args_os().skip(1))? else {
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments == [OsString::from("--version")] || arguments == [OsString::from("-V")] {
+        println!("cheeku {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let Some(invocation) = parse_args(arguments)? else {
         println!("{USAGE}");
         return Ok(());
     };

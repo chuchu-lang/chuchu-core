@@ -8,6 +8,9 @@ on:
       target:
         required: true
         type: string
+      ref:
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -19,6 +22,8 @@ jobs:
       LLVM_SYS_231_STRICT_VERSIONING: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           # The Linux LLVM SDK's lldb links libpython3.14, which setup-python puts
@@ -34,7 +39,7 @@ jobs:
         run: python -m pip install cmake ninja
       - name: Linux SDK dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang lldb python3-lldb build-essential libtinfo6 libxml2-dev libzstd-dev zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install -y clang lldb python3-lldb build-essential patchelf libtinfo6 libxml2-dev libzstd-dev zlib1g-dev
       - name: macOS source build prerequisites
         if: runner.os == 'macOS'
         run: brew install cmake ninja
@@ -118,8 +123,25 @@ jobs:
                           '--levels', 'O2', '--languages', 'chuchu', '--repetitions', '3',
                           '--compile-repetitions', '1', '--warmups', '0', '--no-throughput',
                           '--no-simd-probe', '--output', 'target/benchmark-smoke.json'], check=True)
+      - name: Test and build the independent installer/updater
+        run: |
+          cargo test --locked --manifest-path installer/manager/Cargo.toml
+          cargo clippy --locked --manifest-path installer/manager/Cargo.toml --all-targets -- -D warnings
+          cargo build --locked --release --manifest-path installer/manager/Cargo.toml
+          python -m unittest discover -s installer/tests -p "test_*.py"
+      - name: Collect bundled dependency notices
+        shell: python
+        run: |
+          import os, subprocess
+          subprocess.run(['python', 'installer/collect-notices.py', '--prefix', os.environ['LLVM_SYS_231_PREFIX']], check=True)
       - name: Package only after native tests pass
-        run: python .github/scripts/package-release.py --target ${{ inputs.target }}
+        run: python installer/package.py --target ${{ inputs.target }}
+      - name: Verify install, update, failed update and launcher
+        shell: python
+        run: |
+          import os, subprocess
+          suffix = '.exe' if os.name == 'nt' else ''
+          subprocess.run(['python', 'installer/smoke.py', '--manager', 'installer/manager/target/release/cheeku-manager' + suffix, '--directory', 'target/distributions'], check=True)
       - uses: actions/upload-artifact@v4
         with:
           name: cheeku-${{ inputs.target }}

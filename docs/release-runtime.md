@@ -1,5 +1,12 @@
 # Cheeku native distribution requirements
 
+New self-hosted installer payloads are documented in
+[installers and updates](../installer/README.md). They bundle relocatable compiler
+libraries and use a stable launcher for explicit updates. The legacy archive
+script below still produces dependency-requiring developer archives. Public
+installer signing and clean-machine validation are separate release gates.
+
+
 These archives are **not standalone SDKs**. Each contains one native compiler,
 the Chuchu MIT license, and examples. LLVM, Clang, and Microsoft redistributables
 are not bundled; their redistribution licenses therefore do not become package
