@@ -695,7 +695,6 @@ impl<'ctx> Generator<'ctx> {
                     ty: binding.ty,
                 };
                 // Reading a variable gives an independent copy of what it owns.
-                self.copy_value(value, span)
                 if value.ty == Type::String {
                     self.copy_string(value, span)
                 } else if value.ty == Type::Result(ScalarType::String) {

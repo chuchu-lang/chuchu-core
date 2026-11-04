@@ -193,8 +193,16 @@ impl fmt::Display for CompileError {
                     "Undefined record {name:?} at {}..{}",
                     span.start, span.end
                 ),
-                TypeError::UnknownField {
                 TypeError::UndefinedField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} has no field {field:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::UnknownField {
                     record,
                     field,
                     span,
@@ -222,13 +230,21 @@ impl fmt::Display for CompileError {
                     span.start, span.end
                 ),
                 TypeError::DuplicateInitializer {
-                TypeError::MissingField {
                     record,
                     field,
                     span,
                 } => write!(
                     f,
                     "Field {field:?} of record {record:?} is set more than once at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::MissingField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Missing field {field:?} in {record:?} instantiation at {}..{}",
                     span.start, span.end
                 ),
                 TypeError::MissingFields {
@@ -263,7 +279,6 @@ impl fmt::Display for CompileError {
                 } => write!(
                     f,
                     "Type mismatch: expected {expected}, found {actual} at {}..{}",
-                    "Missing field {field:?} in {record:?} instantiation at {}..{}",
                     span.start, span.end
                 ),
                 TypeError::NotARecord { ty, span } => write!(

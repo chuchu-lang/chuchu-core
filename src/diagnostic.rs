@@ -383,6 +383,8 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 *span,
                 format!("Type mismatch: expected {expected}, found {actual}"),
                 format!("this expression has type {actual}"),
+                None,
+            ),
             TypeError::UndefinedField { record, field, span } => (
                 *span,
                 format!("Record '{record}' has no field '{field}'"),

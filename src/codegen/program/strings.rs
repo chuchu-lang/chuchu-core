@@ -219,50 +219,6 @@ impl<'ctx> Generator<'ctx> {
                 }
             }
             _ => {}
-        if value.ty == Type::Result(ScalarType::String) {
-            let payload = self.result_payload(value, span)?;
-            self.release_value(payload, span)?;
-        } else if value.ty == Type::String {
-            let pointer = self.string_pointer(value.clone(), span)?;
-            let free = self.external(
-                "free",
-                self.context
-                    .void_type()
-                    .fn_type(&[pointer.get_type().into()], false),
-            )?;
-            build(self.builder.build_call(free, &[pointer.into()], ""), span)?;
-        } else if let Type::Record(ref name) = value.ty {
-            if let Some(rec) = self.records.get(name).cloned() {
-                let pointer = self.spill(&value, span)?;
-                for (idx, (_, fty)) in rec.fields.iter().enumerate() {
-                    if fty.owns_string() {
-                        let field_ptr = build(
-                            self.builder.build_struct_gep(
-                                rec.struct_type,
-                                pointer,
-                                idx as u32,
-                                "rec.clean.field",
-                            ),
-                            span,
-                        )?;
-                        let field_raw = build(
-                            self.builder.build_load(
-                                self.llvm_type(fty, span)?,
-                                field_ptr,
-                                "rec.field.val",
-                            ),
-                            span,
-                        )?;
-                        self.release_value(
-                            Value {
-                                raw: field_raw,
-                                ty: fty.clone(),
-                            },
-                            span,
-                        )?;
-                    }
-                }
-            }
         }
         Ok(())
     }
@@ -279,18 +235,6 @@ impl<'ctx> Generator<'ctx> {
             let raw = build(
                 self.builder
                     .build_load(self.llvm_type(ty, span)?, pointer, "release"),
-                self.builder.build_load(
-                    self.llvm_type(&binding.ty, span)?,
-                    binding.pointer,
-                    "string.cleanup",
-                ),
-                span,
-            )?;
-            self.release_value(
-                Value {
-                    raw,
-                    ty: binding.ty,
-                },
                 span,
             )?;
             self.release_value(Value { raw, ty }, span)?;

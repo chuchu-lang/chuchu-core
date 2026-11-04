@@ -60,6 +60,10 @@ pub enum TypeError {
         span: Span,
     },
     DuplicateField {
+        record: String,
+        field: String,
+        span: Span,
+    },
     UndefinedField {
         record: String,
         field: String,
@@ -88,6 +92,20 @@ pub enum TypeError {
     /// An initializer names a record that is not declared.
     UndefinedRecord {
         name: String,
+        span: Span,
+    },
+    MissingField {
+        record: String,
+        field: String,
+        span: Span,
+    },
+    NotARecord {
+        ty: Type,
+        span: Span,
+    },
+    InvalidRecord {
+        name: String,
+        message: &'static str,
         span: Span,
     },
     /// An initializer sets, or an access reads, a field the record does not have.
@@ -150,20 +168,6 @@ pub struct FieldMismatch {
     pub field: String,
     pub expected: String,
     pub actual: String,
-    MissingField {
-        record: String,
-        field: String,
-        span: Span,
-    },
-    NotARecord {
-        ty: Type,
-        span: Span,
-    },
-    InvalidRecord {
-        name: String,
-        message: &'static str,
-        span: Span,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -632,8 +636,6 @@ impl TypeChecker {
             }
         } else {
             TypeError::Mismatch {
-        if !expected.accepts(&actual) {
-            return Err(TypeError::Mismatch {
                 expected,
                 actual,
                 span,

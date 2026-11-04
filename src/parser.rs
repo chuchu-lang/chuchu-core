@@ -623,34 +623,6 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 if self.at(&TokenKind::LeftBrace) && !self.in_condition {
                     self.record_init(name, token.span)?
-                if self.at(&TokenKind::LeftBrace) {
-                    self.advance();
-                    let mut fields = Vec::new();
-                    self.newlines()?;
-                    if !self.at(&TokenKind::RightBrace) {
-                        loop {
-                            let (field_name, _) = self.name()?;
-                            self.require(TokenKind::Colon, "':'")?;
-                            let val = self.parse_expression()?;
-                            fields.push((field_name, val));
-                            self.newlines()?;
-                            if self.at(&TokenKind::Comma) {
-                                self.advance();
-                                self.newlines()?;
-                            }
-                            if self.at(&TokenKind::RightBrace) {
-                                break;
-                            }
-                        }
-                    }
-                    let end = self.require(TokenKind::RightBrace, "'}'")?.span.end;
-                    Expr {
-                        kind: ExprKind::RecordInit { name, fields },
-                        span: Span {
-                            start: token.span.start,
-                            end,
-                        },
-                    }
                 } else {
                     Expr {
                         kind: ExprKind::Identifier(name),
@@ -736,20 +708,10 @@ impl Parser {
                 };
                 expression = Expr {
                     kind: ExprKind::FieldAccess {
-                        object: Box::new(expression),
-                        field,
-                    },
-                    span,
-                let start = expression.span.start;
-                expression = Expr {
-                    kind: ExprKind::FieldAccess {
                         target: Box::new(expression),
                         field,
                     },
-                    span: Span {
-                        start,
-                        end: field_span.end,
-                    },
+                    span,
                 };
             } else {
                 break;
