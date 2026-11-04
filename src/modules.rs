@@ -220,15 +220,6 @@ impl Loader {
         let imports = self.files[id].syntax.imports.clone();
         for import in imports {
             let path = Path::new(&import.path);
-            if import.path.is_empty()
-                || path.is_absolute()
-                || import.path.contains(['\\', ':', '\0'])
-            {
-                return Err(error(
-                    "Import paths must be nonempty relative paths using '/' separators",
-                    import.span,
-                ));
-            }
             let target = identity
                 .parent()
                 .expect("canonical source has a parent")
@@ -285,7 +276,7 @@ impl ModuleGraph {
             for (import, &target) in file.syntax.imports.iter().zip(&file.dependencies) {
                 if scope.imports.insert(import.alias.clone(), target).is_some() {
                     return Err(error(
-                        format!("Duplicate module alias {:?}", import.alias),
+                        format!("Duplicate module name {:?}", import.alias),
                         import.span,
                     ));
                 }
@@ -293,7 +284,7 @@ impl ModuleGraph {
                     || builtin_type(&import.alias)
                 {
                     return Err(error(
-                        format!("Module alias {:?} is a reserved name", import.alias),
+                        format!("Module name {:?} is a reserved name", import.alias),
                         import.span,
                     ));
                 }
@@ -309,7 +300,7 @@ impl ModuleGraph {
                 if scope.imports.contains_key(name) || !declared.insert(name.clone()) {
                     return Err(error(
                         format!(
-                            "Duplicate name {name:?} in module; declarations and import aliases must be unique"
+                            "Duplicate name {name:?} in module; declarations and used module names must be unique"
                         ),
                         statement.span,
                     ));
@@ -387,7 +378,7 @@ impl Resolver<'_> {
             let owner = self.scopes[module].imports.get(alias).ok_or_else(|| {
                 error(
                     format!(
-                        "Unknown module alias {alias:?}; import the module before using {name:?}"
+                        "Unknown module name {alias:?}; add 'use module {alias}' before using {name:?}"
                     ),
                     span,
                 )

@@ -24,7 +24,7 @@ pub enum TokenKind {
     /// Record type declaration keyword: `record`.
     Record,
     Module,
-    Import,
+    Use,
     Export,
     ColonColon,
 

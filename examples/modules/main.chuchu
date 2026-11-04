@@ -1,5 +1,5 @@
-import "./math.chuchu" as math
-import "./geometry.chuchu" as geometry
+use module math
+use module geometry
 
 show math::add(2, 3)
 assign origin as math::Point {

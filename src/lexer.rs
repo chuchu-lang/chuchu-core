@@ -128,7 +128,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
 
                 match &source[start..end] {
                     "module" => TokenKind::Module,
-                    "import" => TokenKind::Import,
+                    "use" => TokenKind::Use,
                     "export" => TokenKind::Export,
                     "assign" => TokenKind::Set,
                     "as" => TokenKind::As,

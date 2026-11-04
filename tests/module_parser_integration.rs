@@ -3,12 +3,13 @@ use chuchu::{lexer::tokenize, parser::Parser};
 
 #[test]
 fn parses_exports_imports_and_qualified_types_and_calls() {
-    let source = "module app\nimport \"./math.chuchu\" as math\nexport function point(p: math::Point) be math::Point {\nreturn p\n}\nshow math::add(2, 3)\nassign p as math::Point {\nx: 0\ny: 0\n}\n";
+    let source = "module app\nuse module math\nexport function point(p: math::Point) be math::Point {\nreturn p\n}\nshow math::add(2, 3)\nassign p as math::Point {\nx: 0\ny: 0\n}\n";
     let module = Parser::new(tokenize(source).unwrap())
         .parse_module()
         .unwrap();
     assert_eq!(module.name.unwrap().0, "app");
     assert_eq!(module.imports[0].alias, "math");
+    assert_eq!(module.imports[0].path, "math.chuchu");
     assert_eq!(module.exports[0].0, "point");
     let StmtKind::Function {
         parameters,
@@ -33,14 +34,20 @@ fn parses_exports_imports_and_qualified_types_and_calls() {
 #[test]
 fn rejects_misplaced_directives_and_invalid_qualification() {
     for source in [
-        "show 1\nimport \"x.chuchu\" as x",
+        "show 1\nuse module x",
         "module a\nmodule b",
         "export assign x as 1",
-        "import x as x",
-        "import \"x.chuchu\"",
+        "use math",
+        "use module",
+        "use module \"math.chuchu\"",
+        "use module .math",
+        "use module math.",
+        "use module math..extra",
+        "use module math as other",
+        "import \"math.chuchu\" as math",
         "show x::",
         "show x::y::z()",
-        "function f() be int {\nimport \"x.chuchu\" as x\nreturn 1\n}",
+        "function f() be int {\nuse module x\nreturn 1\n}",
     ] {
         assert!(
             Parser::new(tokenize(source).unwrap())
@@ -49,4 +56,13 @@ fn rejects_misplaced_directives_and_invalid_qualification() {
             "{source}"
         );
     }
+}
+
+#[test]
+fn dotted_module_names_resolve_to_subdirectories_with_a_short_namespace() {
+    let module = Parser::new(tokenize("use module geometry.math\nshow math::add(2, 3)").unwrap())
+        .parse_module()
+        .unwrap();
+    assert_eq!(module.imports[0].path, "geometry/math.chuchu");
+    assert_eq!(module.imports[0].alias, "math");
 }

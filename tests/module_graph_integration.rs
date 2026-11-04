@@ -32,18 +32,9 @@ impl Drop for Project {
 #[test]
 fn relative_imports_and_diamonds_have_stable_unique_identity() {
     let project = Project::new(&[
-        (
-            "main.chuchu",
-            "import \"./a.chuchu\" as a\nimport \"lib/b.chuchu\" as b",
-        ),
-        (
-            "a.chuchu",
-            "module a\nimport \"lib/shared.chuchu\" as shared",
-        ),
-        (
-            "lib/b.chuchu",
-            "module b\nimport \"../lib/shared.chuchu\" as shared",
-        ),
+        ("main.chuchu", "use module a\nuse module lib.b"),
+        ("a.chuchu", "module a\nuse module lib.shared"),
+        ("lib/b.chuchu", "module b\nuse module shared"),
         ("lib/shared.chuchu", "module shared"),
     ]);
     let graph = project.load().unwrap();
@@ -64,51 +55,38 @@ fn relative_imports_and_diamonds_have_stable_unique_identity() {
 fn invalid_module_graphs_have_source_diagnostics() {
     for (files, expected) in [
         (
-            vec![("main.chuchu", "import \"missing.chuchu\" as missing")],
+            vec![("main.chuchu", "use module missing")],
             "Cannot load imported module",
         ),
-        (
-            vec![("main.chuchu", "import \"main.chuchu\" as main")],
-            "Circular import",
-        ),
+        (vec![("main.chuchu", "use module main")], "Circular import"),
         (
             vec![
-                ("main.chuchu", "import \"a.chuchu\" as a"),
-                ("a.chuchu", "module a\nimport \"b.chuchu\" as b"),
-                ("b.chuchu", "module b\nimport \"a.chuchu\" as a"),
+                ("main.chuchu", "use module a"),
+                ("a.chuchu", "module a\nuse module b"),
+                ("b.chuchu", "module b\nuse module a"),
             ],
             "Circular import",
         ),
         (
-            vec![
-                ("main.chuchu", "import \"a.chuchu\" as a"),
-                ("a.chuchu", "show 1"),
-            ],
+            vec![("main.chuchu", "use module a"), ("a.chuchu", "show 1")],
             "must start",
         ),
         (
             vec![
-                ("main.chuchu", "import \"a.chuchu\" as a"),
+                ("main.chuchu", "use module a"),
                 ("a.chuchu", "module a\nshow 1"),
             ],
             "executable statements",
         ),
         (
             vec![
-                ("main.chuchu", "import \"a.chuchu\" as a"),
+                ("main.chuchu", "use module a"),
                 ("a.chuchu", "module a\nshow @"),
             ],
             "Invalid source character",
         ),
-        (vec![("main.chuchu", "import \"\" as a")], "relative paths"),
-        (
-            vec![("main.chuchu", "import \"/a.chuchu\" as a")],
-            "relative paths",
-        ),
-        (
-            vec![("main.chuchu", "import \"a.txt\" as a")],
-            ".chuchu file",
-        ),
+        (vec![("main.chuchu", "use math")], "'module' after 'use'"),
+        (vec![("main.chuchu", "use module")], "Expected identifier"),
     ] {
         let project = Project::new(&files);
         let error = project.load().unwrap_err();
@@ -124,7 +102,7 @@ fn resolves_private_helpers_and_separate_namespaces() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nshow a::value() + b::value()",
+            "use module a\nuse module b\nshow a::value() + b::value()",
         ),
         (
             "a.chuchu",
@@ -158,7 +136,7 @@ fn rejects_visibility_and_binding_errors() {
             "is private",
         ),
         ("show a::missing()", "", "Unknown function"),
-        ("show b::missing()", "", "Unknown module alias"),
+        ("show b::missing()", "", "Unknown module name"),
         (
             "show a::Point()",
             "export record Point {\nx: int\n}",
@@ -166,7 +144,7 @@ fn rejects_visibility_and_binding_errors() {
         ),
         ("assign a as 1", "", "Duplicate name"),
         ("function a() be int {\nreturn 1\n}", "", "Duplicate name"),
-        ("import \"a.chuchu\" as a", "", "Duplicate module alias"),
+        ("use module a", "", "Duplicate module name"),
         (
             "",
             "function f() be int {\nreturn 1\n}\nfunction f() be int {\nreturn 2\n}",
@@ -185,10 +163,10 @@ fn rejects_visibility_and_binding_errors() {
         (
             "",
             "function show_private() be int {\nreturn missing::f()\n}",
-            "Unknown module alias",
+            "Unknown module name",
         ),
     ] {
-        let main = format!("import \"a.chuchu\" as a\n{main}");
+        let main = format!("use module a\n{main}");
         let library = format!("module a\n{library}");
         let project = Project::new(&[("main.chuchu", &main), ("a.chuchu", &library)]);
         let error = project.load().unwrap().resolve().unwrap_err();
@@ -202,12 +180,12 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nassign p as a::Point {\nx: 2\n}\nassign box as b::Box {\np: p\n}\nshow b::get(box).x",
+            "use module a\nuse module b\nassign p as a::Point {\nx: 2\n}\nassign box as b::Box {\np: p\n}\nshow b::get(box).x",
         ),
         ("a.chuchu", "module a\nexport record Point {\nx: int\n}"),
         (
             "b.chuchu",
-            "module b\nimport \"a.chuchu\" as a\nexport record Box {\np: a::Point\n}\nexport function get(box: Box) be a::Point {\nreturn box.p\n}",
+            "module b\nuse module a\nexport record Box {\np: a::Point\n}\nexport function get(box: Box) be a::Point {\nreturn box.p\n}",
         ),
     ]);
     let graph = project.load().unwrap();
@@ -220,7 +198,7 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nassign p as a::Point {\nx: 2\n}\nshow b::get(p)",
+            "use module a\nuse module b\nassign p as a::Point {\nx: 2\n}\nshow b::get(p)",
         ),
         ("a.chuchu", "module same\nexport record Point {\nx: int\n}"),
         (
@@ -240,7 +218,7 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
 #[test]
 fn recursive_module_records_report_errors_without_span_underflow() {
     let project = Project::new(&[
-        ("main.chuchu", "import \"a.chuchu\" as a"),
+        ("main.chuchu", "use module a"),
         (
             "a.chuchu",
             "module a_very_long_module_name\nrecord A {\nx: B\n}\nrecord B {\nx: A\n}",
@@ -256,17 +234,19 @@ fn recursive_module_records_report_errors_without_span_underflow() {
 }
 
 #[test]
-fn multiple_aliases_of_one_file_share_record_identity() {
+#[cfg(unix)]
+fn multiple_module_names_for_one_file_share_record_identity() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"a.chuchu\" as a\nimport \"./a.chuchu\" as other\nassign p as a::Point {\nx: 4\n}\nshow other::read(p)",
+            "use module a\nuse module link\nassign p as a::Point {\nx: 4\n}\nshow link::read(p)",
         ),
         (
             "a.chuchu",
             "module a\nexport record Point {\nx: int\n}\nexport function read(p: Point) be int {\nreturn p.x\n}",
         ),
     ]);
+    std::os::unix::fs::symlink(project.0.join("a.chuchu"), project.0.join("link.chuchu")).unwrap();
     let graph = project.load().unwrap();
     assert_eq!(graph.files.len(), 2);
     let statements = graph.resolve().unwrap();
@@ -280,10 +260,7 @@ fn multiple_aliases_of_one_file_share_record_identity() {
 #[cfg(unix)]
 fn symbolic_link_imports_use_the_same_module_identity() {
     let project = Project::new(&[
-        (
-            "main.chuchu",
-            "import \"a.chuchu\" as a\nimport \"link.chuchu\" as other",
-        ),
+        ("main.chuchu", "use module a\nuse module link"),
         ("a.chuchu", "module a"),
     ]);
     std::os::unix::fs::symlink(project.0.join("a.chuchu"), project.0.join("link.chuchu")).unwrap();

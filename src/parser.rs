@@ -122,25 +122,24 @@ impl Parser {
                     span: self.token()?.span,
                 });
             }
-            if self.at(&TokenKind::Import) {
+            if self.at(&TokenKind::Use) {
                 if declarations {
                     return Err(ParseError::ExpectedToken {
-                        expected: "imports before declarations and executable statements",
+                        expected: "module uses before declarations and executable statements",
                         span: self.token()?.span,
                     });
                 }
                 let start = self.token()?.span.start;
                 self.advance();
-                let token = self.token()?;
-                let TokenKind::String(path) = token.kind else {
-                    return Err(ParseError::ExpectedToken {
-                        expected: "quoted module path",
-                        span: token.span,
-                    });
-                };
-                self.advance();
-                self.require(TokenKind::As, "'as' followed by a module alias")?;
-                let (alias, alias_span) = self.name()?;
+                self.require(TokenKind::Module, "'module' after 'use'")?;
+                let (mut alias, mut alias_span) = self.name()?;
+                let mut components = vec![alias.clone()];
+                while self.at(&TokenKind::Dot) {
+                    self.advance();
+                    (alias, alias_span) = self.name()?;
+                    components.push(alias.clone());
+                }
+                let path = format!("{}.chuchu", components.join("/"));
                 module.imports.push(crate::ast::Import {
                     path,
                     alias,

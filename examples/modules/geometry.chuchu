@@ -1,6 +1,6 @@
 module geometry
 
-import "./math.chuchu" as math
+use module math
 
 function move(value: int, distance: int) be int {
     return math::add(value, distance)

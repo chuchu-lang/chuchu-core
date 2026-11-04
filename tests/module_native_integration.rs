@@ -80,15 +80,15 @@ fn module_namespaces_do_not_collide_and_dependencies_resolve_from_source_directo
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"lib/a.chuchu\" as a\nimport \"lib/b.chuchu\" as b\nshow a::value()\nshow b::value()",
+            "use module lib.a\nuse module lib.b\nshow a::value()\nshow b::value()",
         ),
         (
             "lib/a.chuchu",
-            "module same\nimport \"shared.chuchu\" as shared\nexport function value() be int {\nreturn shared::twice(2)\n}",
+            "module same\nuse module shared\nexport function value() be int {\nreturn shared::twice(2)\n}",
         ),
         (
             "lib/b.chuchu",
-            "module same\nimport \"./shared.chuchu\" as shared\nexport function value() be int {\nreturn shared::twice(3)\n}",
+            "module same\nuse module shared\nexport function value() be int {\nreturn shared::twice(3)\n}",
         ),
         (
             "lib/shared.chuchu",
@@ -115,10 +115,7 @@ fn module_namespaces_do_not_collide_and_dependencies_resolve_from_source_directo
 #[test]
 fn dependency_type_errors_report_the_original_file_and_preserve_output() {
     let project = Project::new(&[
-        (
-            "main.chuchu",
-            "import \"lib/a.chuchu\" as a\nshow a::value()",
-        ),
+        ("main.chuchu", "use module lib.a\nshow a::value()"),
         (
             "lib/a.chuchu",
             "module a\nexport function value() be int {\nreturn missing\n}",
@@ -140,7 +137,7 @@ fn dependency_type_errors_report_the_original_file_and_preserve_output() {
 fn every_imported_source_is_protected_from_artifact_overwrites() {
     let library = "module a\nexport function value() be int {\nreturn 1\n}";
     let project = Project::new(&[
-        ("main.chuchu", "import \"a.chuchu\" as a\nshow a::value()"),
+        ("main.chuchu", "use module a\nshow a::value()"),
         ("a.chuchu", library),
     ]);
     let source = project.0.join("a.chuchu");
@@ -171,7 +168,7 @@ fn every_imported_source_is_protected_from_artifact_overwrites() {
 #[test]
 fn runtime_errors_in_dependencies_name_their_source_file() {
     let project = Project::new(&[
-        ("main.chuchu", "import \"a.chuchu\" as a\nshow a::divide(0)"),
+        ("main.chuchu", "use module a\nshow a::divide(0)"),
         (
             "a.chuchu",
             "module a\nexport function divide(n: int) be int {\nreturn 1 / n\n}",
@@ -187,7 +184,7 @@ fn runtime_errors_in_dependencies_name_their_source_file() {
 
 #[test]
 fn named_source_api_resolves_imports_and_unnamed_api_explains_the_requirement() {
-    let text = "import \"a.chuchu\" as a\nshow a::value()";
+    let text = "use module a\nshow a::value()";
     let project = Project::new(&[
         ("main.chuchu", text),
         (
@@ -212,7 +209,7 @@ fn imported_record_strings_preserve_value_semantics_across_functions() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "import \"people.chuchu\" as people\nassign original as people::Person {\nname: \"Ada 🌍\"\n}\nassign changed as people::rename(original)\nshow original.name\nshow changed.name",
+            "use module people\nassign original as people::Person {\nname: \"Ada 🌍\"\n}\nassign changed as people::rename(original)\nshow original.name\nshow changed.name",
         ),
         (
             "people.chuchu",
@@ -232,8 +229,8 @@ fn imported_record_strings_preserve_value_semantics_across_functions() {
 #[test]
 fn dependency_parse_errors_point_to_local_eof_with_an_import_trace() {
     let project = Project::new(&[
-        ("main.chuchu", "import \"a.chuchu\" as a"),
-        ("a.chuchu", "module a\nimport \"b.chuchu\" as b"),
+        ("main.chuchu", "use module a"),
+        ("a.chuchu", "module a\nuse module b"),
         (
             "b.chuchu",
             "module b\nexport function broken() be int {\nreturn 1",
@@ -257,7 +254,7 @@ fn dependency_parse_errors_point_to_local_eof_with_an_import_trace() {
 
 #[test]
 fn named_source_api_keeps_support_for_extensionless_entry_files() {
-    let text = "import \"a.chuchu\" as a\nshow a::value()";
+    let text = "use module a\nshow a::value()";
     let project = Project::new(&[
         ("entry", text),
         (

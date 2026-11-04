@@ -194,7 +194,9 @@ pub struct ModuleSyntax {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
+    /// Relative source path derived from `use module library.math`.
     pub path: String,
+    /// The last module component (`math`), used for qualified access.
     pub alias: String,
     pub span: Span,
 }
