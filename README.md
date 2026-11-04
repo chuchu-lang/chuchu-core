@@ -272,3 +272,9 @@ See [optimization/API details](docs/optimization.md),
 [measurement methodology](docs/performance.md), the
 [benchmark runner](benchmarks/README.md), and the
 [benchmark results and limitations](docs/benchmark-results.md).
+
+The official website automatically discovers native installers through the
+separate `downloads.json` manifest. See the
+[installer guide](installer/README.md#website-downloads) for its schema and the
+[AWS deployment guide](docs/aws-installer-releases.md#website-integration-and-consistency)
+for publication consistency, CloudFront settings and first-release verification.

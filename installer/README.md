@@ -141,8 +141,9 @@ python3 installer/assemble.py --directory target/distributions --version 0.1.0
 
 The assembler checks every target and artifact checksum, then writes `latest.json`
 and `SHA256SUMS`. Upload the **versioned artifacts first** to the S3 origin so
-they are served directly under `https://downloads.chuchu-lang.org/`. Upload
-`latest.json` last, after the referenced files are available. The automated
+they are served directly under `https://downloads.chuchu-lang.org/`. Commit
+`latest.json` after the referenced immutable files are available, then refresh
+`downloads.json` (the website mirror). The automated
 publisher applies no-cache headers to `latest.json` and immutable cache headers
 to versioned files. Keep previous artifacts available for recovery.
 Never overwrite an existing published version with different bytes.
@@ -152,7 +153,8 @@ version and tagged commit's ancestry from protected `main`, and builds that exac
 commit on four native runners. After all tests pass, it stages a GitHub draft,
 waits for the `production` environment approval, authenticates with AWS through
 OIDC, and uploads verified artifacts to the existing private S3 bucket. It
-publishes `latest.json` last using a conditional write, verifies CloudFront, then
+commits `latest.json` using a conditional write, refreshes `downloads.json`,
+verifies CloudFront, then
 finalizes the GitHub Release. Ordinary merges only run quick checks.
 
 The manager build, packaging and assembly use matching production URLs. The
@@ -189,3 +191,16 @@ checks of prerequisite installation, OS permission prompts, PATH propagation,
 Gatekeeper/SmartScreen, and distribution-specific ABI compatibility. Linux
 artifacts inherit the build runner's glibc baseline; broader/older distributions
 need an explicitly selected baseline and separate clean-environment tests.
+
+
+## Website downloads
+
+`assemble.py` generates the separate `downloads.json` schema and immutable
+`downloads-<version>.json` from the actual four native installer files. The
+updater schema is unchanged. Sizes and SHA-256 are calculated from files;
+missing installers prevent assembly/publication. The date is UTC assembly day
+and retained on identical reassembly; retries must reuse the original artifacts.
+See `downloads.schema.json` and the deployment guide's website integration section
+for the single-pointer consistency protocol, CloudFront Console steps, IAM
+additions, first release checks and rollback. Run ordinary release tests with
+`python3 -m unittest discover -s installer/tests -p 'test_*.py'`; no AWS is used.

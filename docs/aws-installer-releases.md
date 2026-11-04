@@ -3,7 +3,7 @@
 ## Architecture and existing infrastructure
 
 The release workflow extends the existing native packager and Rust manager.
-It never creates infrastructure or changes the website.
+It never creates infrastructure. The website independently reads public release metadata.
 
 | Resource | Existing production value |
 | --- | --- |
@@ -13,7 +13,7 @@ It never creates infrastructure or changes the website.
 | CloudFront domain | `d36tmdxqvl259p.cloudfront.net` |
 | Public download base | `https://downloads.chuchu-lang.org` |
 | Active manifest | `https://downloads.chuchu-lang.org/latest.json` |
-| Website download page | `https://www.chuchu-lang.org/downloads` (unchanged) |
+| Website download page | `https://www.chuchu-lang.org/download` (`/downloads` redirects here) |
 
 Pull requests and pushes to `main` run quick checks without release builds.
 Only a `v*` tag push or a manual release dispatch starts the release pipeline:
@@ -34,8 +34,8 @@ Only a `v*` tag push or a manual release dispatch starts the release pipeline:
    job has `id-token: write`; it assumes the configured AWS role through OIDC.
 5. Validate locally again, preflight existing S3 objects, upload missing payloads,
    managers, manifests, installers and checksums, then verify every object's S3
-   SHA-256, size, content type and cache metadata. Write `latest.json` **last**.
-6. Verify the small manifest with an HTTPS GET and every immutable file with
+   SHA-256, size, content type and cache metadata. Commit `latest.json` only after all immutable files are verified, then refresh the `downloads.json` mirror.
+6. Verify both public manifests with HTTPS GETs and every immutable file with
    HTTPS HEAD requests through CloudFront. Publish the GitHub Release only after
    verification succeeds. The workflow summary reports the production URLs.
 
@@ -154,7 +154,9 @@ The active manifest can be created when absent or replaced with an ETag match.
         "arn:aws:s3:::chuchu-installers-prod/Chuchu-*",
         "arn:aws:s3:::chuchu-installers-prod/install-chuchu-*",
         "arn:aws:s3:::chuchu-installers-prod/SHA256SUMS-*",
-        "arn:aws:s3:::chuchu-installers-prod/latest.json"
+        "arn:aws:s3:::chuchu-installers-prod/latest.json",
+        "arn:aws:s3:::chuchu-installers-prod/downloads.json",
+        "arn:aws:s3:::chuchu-installers-prod/downloads-*.json"
       ]
     },
     {
@@ -165,7 +167,8 @@ The active manifest can be created when absent or replaced with an ETag match.
         "arn:aws:s3:::chuchu-installers-prod/cheeku-*",
         "arn:aws:s3:::chuchu-installers-prod/Chuchu-*",
         "arn:aws:s3:::chuchu-installers-prod/install-chuchu-*",
-        "arn:aws:s3:::chuchu-installers-prod/SHA256SUMS-*"
+        "arn:aws:s3:::chuchu-installers-prod/SHA256SUMS-*",
+        "arn:aws:s3:::chuchu-installers-prod/downloads-*.json"
       ],
       "Condition": {"StringEquals": {"s3:if-none-match": "*"}}
     },
@@ -173,14 +176,14 @@ The active manifest can be created when absent or replaced with an ETag match.
       "Sid": "CreateInitialManifest",
       "Effect": "Allow",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::chuchu-installers-prod/latest.json",
+      "Resource": ["arn:aws:s3:::chuchu-installers-prod/latest.json", "arn:aws:s3:::chuchu-installers-prod/downloads.json"],
       "Condition": {"StringEquals": {"s3:if-none-match": "*"}}
     },
     {
       "Sid": "ReplaceUnchangedManifest",
       "Effect": "Allow",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::chuchu-installers-prod/latest.json",
+      "Resource": ["arn:aws:s3:::chuchu-installers-prod/latest.json", "arn:aws:s3:::chuchu-installers-prod/downloads.json"],
       "Condition": {"Null": {"s3:if-match": "false"}}
     }
   ]
@@ -224,7 +227,7 @@ full-object SHA-256 and conditional-create semantics, not multipart uploads.
 | Object | Cache-Control | Content-Type |
 | --- | --- | --- |
 | Versioned files | `public, max-age=31536000, immutable` | By file type |
-| `latest.json` | `no-cache, no-store, must-revalidate` | `application/json` |
+| `latest.json`, `downloads.json` | `no-cache, no-store, must-revalidate` | `application/json` |
 | JSON manifests | Immutable | `application/json` |
 | EXE, PKG, native managers | Immutable | `application/octet-stream` |
 | `.sh`, `.command` | Immutable | `text/x-shellscript` |
@@ -379,3 +382,109 @@ Ordinary tests use a fake S3 client and require no AWS credentials. Native
 GitHub Actions jobs remain the final platform validation. Public signing and
 notarization, clean-machine checks and broader Linux ABI support remain existing
 release requirements; this pipeline does not claim to implement them.
+
+
+## Website integration and consistency
+
+```text
+Update Chuchu → merge into main → create matching release tag
+  → build/test four native installers → approve production deployment
+  → upload/verify immutable files in S3 → commit latest.json
+  → refresh downloads.json → verify CloudFront → finalize GitHub Release
+  → Downloads page revalidates metadata → visitors download installers
+```
+
+Assembly additionally creates `downloads-<version>.json` (immutable) and
+`downloads.json` (uncached public mirror). Both use the website-only schema
+in `installer/downloads.schema.json`: schema version, canonical SemVer, UTC
+assembly/release date, four installer entries (display name, filename, HTTPS URL,
+byte size, actual SHA-256), and an optional trusted GitHub release notes URL.
+The immutable website snapshot is included in the versioned checksum inventory;
+the mutable mirror is included only in the local/GitHub inventory.
+
+`latest.json` remains **unchanged** and is the only authoritative commit point.
+The website reads its version, then requests `downloads.json`. If the mirror is
+missing, malformed or differs from that version, it reads the already verified
+`downloads-<active version>.json`. A request racing a commit can show the previous
+complete release until the next refresh; it never combines versions. No second
+release pointer or new AWS resource is introduced. On a pre-integration release
+with no website snapshot, the page shows the no-release fallback.
+
+S3 cannot commit two keys atomically. Between the pointer write and mirror write,
+`downloads.json` may briefly show the previous version. This can last through a
+failed mirror upload; the website still resolves the active immutable snapshot.
+Consumers other than this website must follow the same pointer/snapshot rule.
+A failure **before** the pointer commit preserves the previous active release.
+A failure **after** it leaves a complete new release active and the GitHub release
+draft; retry the original failed deployment using its retained artifact. It repairs
+the mirror and verifies CDN access before finalizing. Do not rebuild that version.
+Global deployment serialization, SemVer downgrade checks, immutable conditional
+creates, and ETag-conditional writes on **both** mutable keys stop stale writers
+from replacing newer metadata. A raced conditional write fails closed.
+
+### Existing CloudFront distribution: Console changes
+
+1. Open **CloudFront → Distributions** and select `chuchu-installers-cdn`, verifying
+   its domain is `d36tmdxqvl259p.cloudfront.net`. Do not create a distribution.
+2. In **Behaviors → Create behavior**, set path pattern `downloads.json`, choose
+   the same private S3/OAC origin as `latest.json`, and allow GET/HEAD with
+   HTTPS-only or redirect HTTP to HTTPS. Match the existing latest behavior.
+3. Choose managed cache policy **CachingDisabled** (minimum/default/maximum TTL
+   zero). Place this exact behavior before any broader JSON wildcard. Retain
+   the existing disabled-cache behavior for `latest.json`.
+4. Leave `downloads-*.json` on the existing immutable/default behavior, with
+   minimum TTL zero and origin cache headers respected. Do not attach the
+   disabled policy to the versioned snapshots unless deliberately desired.
+5. Ensure response-header policies do not overwrite origin Content-Type or
+   Cache-Control. The publisher supplies `application/json` for both manifests;
+   mutable manifests use `no-cache, no-store, must-revalidate`, snapshots use
+   `public, max-age=31536000, immutable`.
+6. Review **Error pages** for 403/404: use a short error caching minimum TTL
+   (0 where supported; S3 origins retain a small minimum), without mapping an
+   error to a successful HTML page. Wait for configuration deployment. If old
+   responses were already cached, an authorized operator can invalidate only
+   `/latest.json` and `/downloads.json` once. CI needs no invalidation rights.
+7. Extend the existing deployment role policy with the two download manifest
+   patterns shown above. If an existing bucket/OAC policy restricts object
+   prefixes, include `downloads.json` and `downloads-*.json` for the existing
+   distribution's read access; retain private access and the distribution ARN
+   restriction. No browser AWS credentials or CORS changes are required.
+
+See AWS's [cache policy documentation](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/controlling-the-cache-key.html),
+[error caching settings](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesErrorPages.html)
+and [conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
+
+### First release and rollback verification
+
+Deploy the website through its existing Next.js hosting flow after review/merge
+(`npm ci`, `npm run lint`, `npm run test`, `npm run build`). It needs a Node.js
+Next.js runtime with Cache Components support, public outbound HTTPS access, and
+no AWS variables. A static export cannot revalidate server data. Then publish a
+reviewed matching compiler tag through the workflow and production approval.
+
+After deployment, GET `/latest.json` and `/downloads.json` on the download domain;
+check both versions match and headers are uncached JSON. Confirm the versioned
+website snapshot is accessible. HEAD every installer URL from the manifest and
+compare Content-Length; download and independently SHA-256-check representative
+installers before testing them on native clean machines. Open
+`https://www.chuchu-lang.org/download` on desktop and mobile, confirm four working
+direct CDN links, the version/date, checksums, source guide and VS Code section.
+Confirm `/downloads` redirects and the canonical remains `/download`. New release
+metadata refreshes after 60 seconds on subsequent traffic, with a 300-second hard
+cache expiry; no website redeployment is needed. An already open tab does not
+poll automatically.
+
+For CloudFront 403, verify the key exists, OAC is attached to the selected origin,
+the bucket policy allows that distribution ARN to GetObject for these new keys,
+and any encryption policy permits it. S3 may report an absent key as 403 when
+listing is disallowed; never make the bucket public to diagnose this. A 404 before
+the first release is expected and the website remains usable.
+
+For an approved manual rollback, follow the earlier operator procedure to
+conditionally restore `latest.json`. Also conditionally restore `downloads.json`
+from the verified `downloads-<rollback version>.json`, retaining JSON content type,
+no-cache headers and SHA-256 metadata. Re-read each key's ETag before replacing
+it. The website resolves the pointer's immutable snapshot even during this window.
+Do not overwrite snapshots; installed managers still refuse downgrades. Test both
+public manifests and the page after cache expiry, and publish a higher fixed
+version for existing installations.

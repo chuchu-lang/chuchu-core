@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 from package import TARGETS, digest
 from release_artifacts import version_key
+from download_manifest import generate
+from datetime import datetime, timezone
 
 
-def assemble(directory, version, base_url, require_all=True):
+def assemble(directory, version, base_url, require_all=True, release_date=None):
     version_key(version)
     platforms = {}
     for path in sorted(directory.glob(f'cheeku-{version}-*.json')):
@@ -29,13 +31,20 @@ def assemble(directory, version, base_url, require_all=True):
         raise ValueError(f'Missing release targets: {set(TARGETS) - set(platforms)}')
     if not platforms:
         raise ValueError('No release manifests found')
+    if release_date is None:
+        previous = directory / f'downloads-{version}.json'
+        release_date = (json.loads(previous.read_text())['release_date'] if previous.exists()
+                        else datetime.now(timezone.utc).date().isoformat())
+    website = generate(directory, version, base_url, release_date)
     result = {'schema_version': 1, 'version': version, 'update_url': base_url.rstrip('/') + '/latest.json', 'platforms': platforms}
     (directory / 'latest.json').write_text(json.dumps(result, indent=2) + '\n')
     # Retain an immutable rollback snapshot and checksum inventory per release.
     (directory / f'cheeku-{version}.json').write_bytes((directory / 'latest.json').read_bytes())
+    (directory / 'downloads.json').write_text(json.dumps(website, indent=2) + '\n')
+    (directory / f'downloads-{version}.json').write_bytes((directory / 'downloads.json').read_bytes())
     version_sums = directory / f'SHA256SUMS-{version}'
     immutable = [path for path in sorted(directory.iterdir())
-                 if path.is_file() and path.name not in {'latest.json', 'SHA256SUMS', version_sums.name}]
+                 if path.is_file() and path.name not in {'latest.json', 'downloads.json', 'SHA256SUMS', version_sums.name}]
     version_sums.write_text(''.join(f'{digest(path)}  {path.name}\n' for path in immutable))
     checksums = ''.join(f'{digest(path)}  {path.name}\n' for path in sorted(directory.iterdir()) if path.is_file() and path.name != 'SHA256SUMS')
     (directory / 'SHA256SUMS').write_text(checksums)

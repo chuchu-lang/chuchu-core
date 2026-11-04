@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate, upload immutable files, verify, then conditionally publish latest.json."""
+"""Verify immutable files, commit latest.json, then refresh the website mirror."""
 import argparse
 import base64
 import json
@@ -74,7 +74,17 @@ def publish(s3, directory, version):
         raise ValueError('Refusing to downgrade latest.json')
     if current and current['version'] == version and current != manifest:
         raise ValueError('This version is already active with a different manifest')
-    # SHA256SUMS includes mutable latest.json. Its immutable counterpart contains
+    mirror = optional(s3.get_object, Bucket=BUCKET, Key='downloads.json')
+    mirror_etag = mirror['ETag'] if mirror else None
+    if mirror:
+        try:
+            raw = mirror['Body'].read(1024 * 1024 + 1)
+        finally:
+            mirror['Body'].close()
+        previous = json.loads(raw)
+        if version_key(previous['version']) > version_key(version):
+            raise ValueError('Refusing to downgrade downloads.json')
+    # SHA256SUMS includes both mutable manifests. Its immutable counterpart contains
     # the versioned snapshot instead and is the checksum file served by S3.
     def upload_order(path):
         name = path.name
@@ -85,7 +95,7 @@ def publish(s3, directory, version):
         if name.endswith('.json'):
             return (2, name)
         return (4 if name.startswith('SHA256SUMS') else 3, name)
-    files = sorted((p for p in directory.iterdir() if p.name not in {'latest.json', 'SHA256SUMS'}), key=upload_order)
+    files = sorted((p for p in directory.iterdir() if p.name not in {'latest.json', 'downloads.json', 'SHA256SUMS'}), key=upload_order)
     # Check every collision before writing anything; retries only reuse exact bytes.
     exists = {p.name: verify_object(s3, p.name, p, IMMUTABLE) for p in files}
     for path in files:
@@ -111,6 +121,14 @@ def publish(s3, directory, version):
     active, _ = active_manifest(s3)
     if active != manifest:
         raise ValueError('The active manifest changed during verification')
+    # latest.json is the sole commit point. downloads.json is a repairable mirror;
+    # readers resolve a mismatch through immutable downloads-<active version>.json.
+    website = directory / 'downloads.json'
+    if not mirror or raw != website.read_bytes():
+        put(s3, 'downloads.json', website, NO_CACHE,
+            **({'IfMatch': mirror_etag} if mirror_etag else {'IfNoneMatch': '*'}))
+    if not verify_object(s3, 'downloads.json', website, NO_CACHE):
+        raise ValueError('Published downloads.json is missing')
     return manifest
 
 
@@ -122,7 +140,7 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
 
 
 def verify_http(directory, version, opener=None):
-    """GET the small manifest, HEAD every immutable object; S3 verified the bytes."""
+    """GET public manifests, HEAD every immutable object; S3 verified the bytes."""
     manifest = validate_release(directory, version)
     opener = opener or urllib.request.build_opener(HTTPSOnly())
     with opener.open(BASE_URL + '/latest.json', timeout=60) as response:
@@ -133,8 +151,14 @@ def verify_http(directory, version, opener=None):
             raise ValueError('Incorrect latest.json Cache-Control')
         if response.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             raise ValueError('Incorrect latest.json Content-Type')
+    with opener.open(BASE_URL + '/downloads.json', timeout=60) as response:
+        data = response.read(1024 * 1024 + 1)
+        if (len(data) > 1024 * 1024 or data != (directory / 'downloads.json').read_bytes()
+                or response.headers.get('Cache-Control') != NO_CACHE
+                or response.headers.get('Content-Type', '').split(';')[0] != 'application/json'):
+            raise ValueError('CloudFront downloads.json bytes/cache/type mismatch')
     for path in sorted(directory.iterdir()):
-        if path.name in {'SHA256SUMS', 'latest.json'}:
+        if path.name in {'SHA256SUMS', 'latest.json', 'downloads.json'}:
             continue
         request = urllib.request.Request(BASE_URL + '/' + path.name, method='HEAD')
         with opener.open(request, timeout=60) as response:

@@ -3,6 +3,7 @@ import json
 import re
 
 from package import TARGETS, digest
+from download_manifest import validate_downloads
 
 BASE_URL = 'https://downloads.chuchu-lang.org'
 BUCKET = 'chuchu-installers-prod'
@@ -36,7 +37,7 @@ def validate_tag(tag, compiler_version):
 
 def expected_files(version):
     version_key(version)
-    names = {'latest.json', 'SHA256SUMS', f'cheeku-{version}.json', f'SHA256SUMS-{version}'}
+    names = {'downloads.json', f'downloads-{version}.json', 'latest.json', 'SHA256SUMS', f'cheeku-{version}.json', f'SHA256SUMS-{version}'}
     for target, system in TARGETS.items():
         stem = f'cheeku-{version}-{target}'
         names.update({stem + '.json', stem + ('.zip' if system == 'Windows' else '.tar.gz'),
@@ -100,8 +101,9 @@ def validate_release(directory, version):
         validate_manifest(native, version, targets=[target])
         if native != dict(manifest, platforms={target: entry}):
             raise ValueError(f'Platform manifest disagrees with latest.json: {target}')
+    validate_downloads(directory, version, BASE_URL)
     version_sums = f'SHA256SUMS-{version}'
-    check_sums(directory / version_sums, directory, names - {'latest.json', 'SHA256SUMS', version_sums})
+    check_sums(directory / version_sums, directory, names - {'latest.json', 'downloads.json', 'SHA256SUMS', version_sums})
     check_sums(directory / 'SHA256SUMS', directory, names - {'SHA256SUMS'})
     return manifest
 

@@ -133,7 +133,7 @@ jobs:
           aws-region: us-east-1
           role-session-name: chuchu-release-${{ github.run_id }}
           unset-current-credentials: true
-      - name: Publish verified files, then latest.json, and verify CloudFront
+      - name: Publish verified files, commit release pointer, refresh website mirror and verify CloudFront
         run: python installer/publish_s3.py --directory distributions --version "$RELEASE_VERSION"
       - name: Finalize GitHub Release after successful deployment
         run: python installer/release_control.py finalize
@@ -142,6 +142,7 @@ jobs:
           {
             echo "Released Chuchu $RELEASE_VERSION"
             echo
+            echo "Website manifest: https://downloads.chuchu-lang.org/downloads.json"
             echo "Update manifest: https://downloads.chuchu-lang.org/latest.json"
             echo "Manifest snapshot: https://downloads.chuchu-lang.org/cheeku-$RELEASE_VERSION.json"
             echo "Checksums: https://downloads.chuchu-lang.org/SHA256SUMS-$RELEASE_VERSION"

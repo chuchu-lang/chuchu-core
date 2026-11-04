@@ -7,6 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from assemble import assemble
 from package import TARGETS, unix_bootstrap
+from download_manifest import INSTALLERS
 
 
 class PackagingTests(unittest.TestCase):
@@ -20,6 +21,8 @@ class PackagingTests(unittest.TestCase):
                     'url': 'https://example.org/downloads/' + binary.name,
                     'size': 7, 'sha256': hashlib.sha256(b'payload').hexdigest()}}}
                 (directory / f'cheeku-0.1.0-{target}.json').write_text(json.dumps(manifest))
+            for _, template in INSTALLERS.values():
+                (directory / template.format(version='0.1.0')).write_bytes(b'installer')
             result = assemble(directory, '0.1.0', 'https://example.org/downloads')
             self.assertEqual(set(result['platforms']), set(TARGETS))
             (directory / (next(iter(TARGETS)) + '.zip')).write_bytes(b'tampered')

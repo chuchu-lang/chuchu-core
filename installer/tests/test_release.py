@@ -21,7 +21,7 @@ from release_control import completed, draft, finalize, get_release, marker, val
 
 def fixture(directory, version='0.1.0'):
     directory.mkdir(exist_ok=True)
-    for name in expected_files(version) - {'latest.json', 'SHA256SUMS', f'SHA256SUMS-{version}', f'cheeku-{version}.json'}:
+    for name in expected_files(version) - {'latest.json', 'downloads.json', f'downloads-{version}.json', 'SHA256SUMS', f'SHA256SUMS-{version}', f'cheeku-{version}.json'}:
         (directory / name).write_bytes(('tested ' + name).encode())
     for target, system in TARGETS.items():
         stem = f'cheeku-{version}-{target}'
@@ -47,6 +47,7 @@ class FakeS3:
         self.fail_key = None
         self.corrupt_head = None
         self.before_latest = None
+        self.before_downloads = None
 
     def head_object(self, Bucket, Key, ChecksumMode):
         assert Bucket == BUCKET and ChecksumMode == 'ENABLED'
@@ -72,6 +73,9 @@ class FakeS3:
         if key == 'latest.json' and self.before_latest:
             callback, self.before_latest = self.before_latest, None
             callback()
+        if key == 'downloads.json' and self.before_downloads:
+            callback, self.before_downloads = self.before_downloads, None
+            callback()
         existing = self.objects.get(key)
         if args.get('IfNoneMatch') == '*' and existing:
             raise S3Error('PreconditionFailed')
@@ -93,6 +97,64 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = fixture(Path(self.temp.name) / 'release')
         self.s3 = FakeS3()
+
+    def test_website_manifest_uses_actual_installers(self):
+        from download_manifest import INSTALLERS
+        data = json.loads((self.directory / 'downloads.json').read_text())
+        self.assertEqual(data['version'], json.loads((self.directory / 'latest.json').read_text())['version'])
+        for platform, (_, template) in INSTALLERS.items():
+            filename = template.format(version='0.1.0')
+            entry = data['installers'][platform]
+            self.assertEqual(entry['filename'], filename)
+            self.assertEqual(entry['url'], BASE_URL + '/' + filename)
+            self.assertEqual(entry['size'], (self.directory / filename).stat().st_size)
+            self.assertEqual(entry['sha256'], hashlib.sha256((self.directory / filename).read_bytes()).hexdigest())
+
+    def test_website_boolean_schema_is_not_an_integer(self):
+        path = self.directory / 'downloads.json'
+        data = json.loads(path.read_text())
+        data['schema_version'] = True
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'Website manifest'):
+            publish(self.s3, self.directory, '0.1.0')
+        self.assertEqual(self.s3.writes, [])
+
+    def test_website_version_mismatch_rejected(self):
+        path = self.directory / 'downloads.json'
+        data = json.loads(path.read_text())
+        data['version'] = '9.0.0'
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'Website manifest'):
+            publish(self.s3, self.directory, '0.1.0')
+        self.assertEqual(self.s3.writes, [])
+
+    def test_website_mirror_failure_has_committed_complete_snapshot_and_retry_repairs(self):
+        publish(self.s3, self.directory, '0.1.0')
+        newer = fixture(Path(self.temp.name) / 'newer', '0.2.0')
+        self.s3.fail_key = 'downloads.json'
+        with self.assertRaises(S3Error):
+            publish(self.s3, newer, '0.2.0')
+        self.assertEqual(json.loads(self.s3.objects['downloads.json']['data'])['version'], '0.1.0')
+        self.assertEqual(json.loads(self.s3.objects['latest.json']['data'])['version'], '0.2.0')
+        self.assertIn('downloads-0.2.0.json', self.s3.objects)
+        self.s3.fail_key = None
+        publish(self.s3, newer, '0.2.0')
+        self.assertEqual(json.loads(self.s3.objects['downloads.json']['data'])['version'], '0.2.0')
+
+    def test_concurrent_newer_mirror_cannot_be_overwritten(self):
+        publish(self.s3, self.directory, '0.1.0')
+        middle = fixture(Path(self.temp.name) / 'middle', '0.2.0')
+        newest = fixture(Path(self.temp.name) / 'newest', '0.3.0')
+        self.s3.before_downloads = lambda: publish(self.s3, newest, '0.3.0')
+        with self.assertRaisesRegex(S3Error, 'PreconditionFailed'):
+            publish(self.s3, middle, '0.2.0')
+        for key in ['latest.json', 'downloads.json']:
+            self.assertEqual(json.loads(self.s3.objects[key]['data'])['version'], '0.3.0')
+
+    def test_missing_installer_prevents_assembly(self):
+        (self.directory / 'Chuchu-0.1.0-aarch64-apple-darwin.pkg').unlink()
+        with self.assertRaisesRegex(ValueError, 'Missing or unsafe installer'):
+            assemble(self.directory, '0.1.0', BASE_URL)
 
     def test_valid_tags_and_semver_ordering(self):
         for version in ['0.1.0', '1.2.3', '1.2.3-rc.1', '2.0.0-alpha-beta']:
@@ -139,7 +201,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_installer_corruption_is_checked_too(self):
         (self.directory / 'Chuchu-Setup-0.1.0-windows-x64.exe').write_bytes(b'corrupt')
-        with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+        with self.assertRaisesRegex(ValueError, 'Website manifest|Checksum mismatch'):
             publish(self.s3, self.directory, '0.1.0')
         self.assertEqual(self.s3.writes, [])
 
@@ -188,10 +250,10 @@ class ReleaseTests(unittest.TestCase):
     def test_success_manifest_last_and_cache_metadata(self):
         result = publish(self.s3, self.directory, '0.1.0')
         self.assertEqual(result['version'], '0.1.0')
-        self.assertEqual(self.s3.writes[-1], 'latest.json')
+        self.assertEqual(self.s3.writes[-2:], ['latest.json', 'downloads.json'])
         self.assertEqual(set(self.s3.objects), expected_files('0.1.0') - {'SHA256SUMS'})
         for name, obj in self.s3.objects.items():
-            self.assertEqual(obj['CacheControl'], NO_CACHE if name == 'latest.json' else IMMUTABLE)
+            self.assertEqual(obj['CacheControl'], NO_CACHE if name in {'latest.json', 'downloads.json'} else IMMUTABLE)
             self.assertEqual(obj['ContentType'], content_type(name))
         self.assertTrue(self.s3.writes[0].endswith(('.zip', '.tar.gz')))
 
@@ -301,7 +363,7 @@ class ReleaseTests(unittest.TestCase):
                                     'Content-Length': str(obj['ContentLength'])}
                 return response
         verify_http(self.directory, '0.1.0', Opener())
-        self.assertEqual(sum(method == 'GET' for _, method in requests), 1)
+        self.assertEqual(sum(method == 'GET' for _, method in requests), 2)
         self.assertEqual(len(requests), len(self.s3.objects))
         self.s3.objects['latest.json']['CacheControl'] = IMMUTABLE
         with self.assertRaisesRegex(ValueError, 'Cache-Control'):

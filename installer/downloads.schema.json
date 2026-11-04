@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chuchu website downloads v1",
+  "description": "Runtime checks additionally enforce canonical prerelease identifiers, version-specific filenames/URLs and matching GitHub release tag.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "version",
+    "release_date",
+    "installers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "release_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "release_notes_url": {
+      "type": "string",
+      "pattern": "^https://github\\.com/chuchu-lang/chuchu-core/releases/tag/v[^/]+$"
+    },
+    "installers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "windows-x64",
+        "macos-arm64",
+        "macos-x64",
+        "linux-x64"
+      ],
+      "properties": {
+        "windows-x64": {
+          "$ref": "#/$defs/installer"
+        },
+        "macos-arm64": {
+          "$ref": "#/$defs/installer"
+        },
+        "macos-x64": {
+          "$ref": "#/$defs/installer"
+        },
+        "linux-x64": {
+          "$ref": "#/$defs/installer"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "installer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "filename",
+        "url",
+        "size",
+        "sha256"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://downloads\\.chuchu-lang\\.org/[A-Za-z0-9_.-]+$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}
