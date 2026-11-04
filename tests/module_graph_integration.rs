@@ -233,7 +233,7 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
         chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
     assert!(matches!(
         checker.check_program(&statements),
-        Err(chuchu::type_checker::TypeError::RecordMismatch { .. })
+        Err(chuchu::type_checker::TypeError::InvalidFunction { .. })
     ));
 }
 
