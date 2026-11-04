@@ -71,6 +71,7 @@ struct Generator<'ctx> {
     // including when lowering returns an error. Rust drops fields in this order.
     debug: Option<debug::DebugState<'ctx>>,
     module: Module<'ctx>,
+    source: Option<crate::source::SourceFile>,
     builder: Builder<'ctx>,
     scopes: Vec<HashMap<String, Binding<'ctx>>>,
     functions: HashMap<String, Function<'ctx>>,
@@ -132,6 +133,7 @@ pub(super) fn generate_with_records<'ctx>(
     let mut generator = Generator {
         context,
         module,
+        source: source.cloned(),
         debug,
         builder: context.create_builder(),
         scopes: vec![HashMap::new()],

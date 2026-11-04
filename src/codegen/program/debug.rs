@@ -107,6 +107,23 @@ impl<'ctx> DebugState<'ctx> {
         })
     }
 
+    fn file(&self, span: Span) -> Result<inkwell::debug_info::DIFile<'ctx>, CodegenError> {
+        let (file, _) = self
+            .source
+            .origin(span.start)
+            .ok_or(invalid("Missing source file for debug location", span))?;
+        let path = file.path();
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(invalid("Debug source path must be UTF-8", span))?;
+        let directory = path
+            .parent()
+            .and_then(|path| path.to_str())
+            .ok_or(invalid("Debug source directory must be UTF-8", span))?;
+        Ok(self.builder.create_file(filename, directory))
+    }
+
     fn position(&self, span: Span) -> Result<crate::source::SourcePosition, CodegenError> {
         self.source
             .position(span.start)
@@ -302,18 +319,15 @@ impl<'ctx> DebugState<'ctx> {
             .iter()
             .map(|(ty, llvm)| self.ty(ty.clone(), *llvm))
             .collect::<Result<Vec<_>, _>>()?;
-        let signature = self.builder.create_subroutine_type(
-            self.unit.get_file(),
-            result,
-            &params,
-            DIFlags::ZERO,
-        );
+        let signature =
+            self.builder
+                .create_subroutine_type(self.file(span)?, result, &params, DIFlags::ZERO);
         let linkage = function.get_name().to_string_lossy();
         let program = self.builder.create_function(
             self.unit.as_debug_info_scope(),
             name,
             Some(&linkage),
-            self.unit.get_file(),
+            self.file(span)?,
             pos.line,
             signature,
             false,
@@ -351,7 +365,7 @@ impl<'ctx> DebugState<'ctx> {
             .ok_or(invalid("Missing debug scope", span))?;
         self.scopes.push(
             self.builder
-                .create_lexical_block(parent, self.unit.get_file(), pos.line, pos.column)
+                .create_lexical_block(parent, self.file(span)?, pos.line, pos.column)
                 .as_debug_info_scope(),
         );
         Ok(())
@@ -380,7 +394,7 @@ impl<'ctx> DebugState<'ctx> {
                 scope,
                 name,
                 index,
-                self.unit.get_file(),
+                self.file(span)?,
                 pos.line,
                 ty,
                 true,
@@ -390,7 +404,7 @@ impl<'ctx> DebugState<'ctx> {
             self.builder.create_auto_variable(
                 scope,
                 name,
-                self.unit.get_file(),
+                self.file(span)?,
                 pos.line,
                 ty,
                 true,

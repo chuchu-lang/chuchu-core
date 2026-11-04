@@ -1,0 +1,11 @@
+import "./math.chuchu" as math
+import "./geometry.chuchu" as geometry
+
+show math::add(2, 3)
+assign origin as math::Point {
+    x: 0
+    y: 0
+}
+assign moved as geometry::translate(origin, 3, 5)
+show moved.x
+show moved.y
