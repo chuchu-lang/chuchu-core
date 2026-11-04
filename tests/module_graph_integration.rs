@@ -118,3 +118,81 @@ fn invalid_module_graphs_have_source_diagnostics() {
         assert!(rendered.contains(" --> "), "{rendered}");
     }
 }
+
+#[test]
+fn resolves_private_helpers_and_separate_namespaces() {
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nshow a::value() + b::value()",
+        ),
+        (
+            "a.chuchu",
+            "module shared\nfunction helper() be int {\nreturn 1\n}\nexport function value() be int {\nreturn helper()\n}",
+        ),
+        (
+            "b.chuchu",
+            "module shared\nexport function value() be int {\nreturn 2\n}",
+        ),
+    ]);
+    let statements = project.load().unwrap().resolve().unwrap();
+    let mut checker =
+        chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
+    checker.check_program(&statements).unwrap();
+    let names = statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            chuchu::ast::StmtKind::Function { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(names.len(), 3);
+}
+
+#[test]
+fn rejects_visibility_and_binding_errors() {
+    for (main, library, expected) in [
+        (
+            "show a::hidden()",
+            "function hidden() be int {\nreturn 1\n}",
+            "is private",
+        ),
+        ("show a::missing()", "", "Unknown function"),
+        ("show b::missing()", "", "Unknown module alias"),
+        (
+            "show a::Point()",
+            "export record Point {\nx: int\n}",
+            "not a function",
+        ),
+        ("assign a as 1", "", "Duplicate name"),
+        ("function a() be int {\nreturn 1\n}", "", "Duplicate name"),
+        ("import \"a.chuchu\" as a", "", "Duplicate module alias"),
+        (
+            "",
+            "function f() be int {\nreturn 1\n}\nfunction f() be int {\nreturn 2\n}",
+            "Duplicate name",
+        ),
+        (
+            "",
+            "record Hidden {\nx: int\n}\nexport function leak(p: Hidden) be int {\nreturn p.x\n}",
+            "exposes private record",
+        ),
+        (
+            "",
+            "record Hidden {\nx: int\n}\nexport record Public {\np: Hidden\n}",
+            "exposes private record",
+        ),
+        (
+            "",
+            "function show_private() be int {\nreturn missing::f()\n}",
+            "Unknown module alias",
+        ),
+    ] {
+        let main = format!("import \"a.chuchu\" as a\n{main}");
+        let library = format!("module a\n{library}");
+        let project = Project::new(&[("main.chuchu", &main), ("a.chuchu", &library)]);
+        let error = project.load().unwrap().resolve().unwrap_err();
+        let rendered = chuchu::diagnostic::render(&error, &project.0.join("main.chuchu"), &main);
+        assert!(rendered.contains(expected), "{rendered}");
+    }
+}

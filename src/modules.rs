@@ -184,3 +184,329 @@ impl Loader {
         Ok(id)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SymbolKind {
+    Function,
+    Record,
+}
+
+struct Symbol {
+    kind: SymbolKind,
+    exported: bool,
+    lowered: String,
+}
+
+struct Scope {
+    symbols: HashMap<String, Symbol>,
+    imports: HashMap<String, usize>,
+}
+
+impl ModuleGraph {
+    /// Resolve names into unique module-qualified identities. LLVM lowering and
+    /// nominal record typing can then share the existing whole-program pipeline.
+    pub fn resolve(&self) -> Result<Vec<crate::ast::Stmt>, CompileError> {
+        let result = self.resolve_inner();
+        result.map_err(|error| CompileError::Located {
+            error: Box::new(error),
+            source: Box::new(self.sources()),
+        })
+    }
+
+    fn resolve_inner(&self) -> Result<Vec<crate::ast::Stmt>, CompileError> {
+        if self.files.len() == 1 {
+            let syntax = &self.files[0].syntax;
+            if syntax.name.is_none() && syntax.imports.is_empty() && syntax.exports.is_empty() {
+                return Ok(syntax.statements.clone());
+            }
+        }
+        let mut scopes = Vec::new();
+        for (id, file) in self.files.iter().enumerate() {
+            let mut scope = Scope {
+                symbols: HashMap::new(),
+                imports: HashMap::new(),
+            };
+            for (import, &target) in file.syntax.imports.iter().zip(&file.dependencies) {
+                if scope.imports.insert(import.alias.clone(), target).is_some() {
+                    return Err(error(
+                        format!("Duplicate module alias {:?}", import.alias),
+                        import.span,
+                    ));
+                }
+                if crate::type_checker::reserved_function(&import.alias)
+                    || builtin_type(&import.alias)
+                {
+                    return Err(error(
+                        format!("Module alias {:?} is a reserved name", import.alias),
+                        import.span,
+                    ));
+                }
+            }
+            let mut declared = std::collections::HashSet::new();
+            for statement in &file.syntax.statements {
+                let (name, kind) = match &statement.kind {
+                    StmtKind::Function { name, .. } => (name, Some(SymbolKind::Function)),
+                    StmtKind::Record { name, .. } => (name, Some(SymbolKind::Record)),
+                    StmtKind::Set { name, .. } => (name, None),
+                    _ => continue,
+                };
+                if scope.imports.contains_key(name) || !declared.insert(name.clone()) {
+                    return Err(error(
+                        format!(
+                            "Duplicate name {name:?} in module; declarations and import aliases must be unique"
+                        ),
+                        statement.span,
+                    ));
+                }
+                if kind == Some(SymbolKind::Function)
+                    && crate::type_checker::reserved_function(name)
+                {
+                    return Err(CompileError::Type(
+                        crate::type_checker::TypeError::InvalidFunction {
+                            name: name.clone(),
+                            message: "duplicate or reserved function name",
+                            span: statement.span,
+                        },
+                    ));
+                }
+                if kind == Some(SymbolKind::Record) && builtin_type(name) {
+                    return Err(CompileError::Type(
+                        crate::type_checker::TypeError::ReservedRecordName {
+                            name: name.clone(),
+                            span: statement.span,
+                        },
+                    ));
+                }
+                if let Some(kind) = kind {
+                    let label = file
+                        .syntax
+                        .name
+                        .as_ref()
+                        .map_or("entry", |(name, _)| name.as_str());
+                    scope.symbols.insert(
+                        name.clone(),
+                        Symbol {
+                            kind,
+                            exported: file.syntax.exports.iter().any(|(export, _)| export == name),
+                            // Brackets cannot occur in a source identifier. The file ID
+                            // also distinguishes modules that use the same label.
+                            lowered: format!("{label}[{id}]::{name}"),
+                        },
+                    );
+                }
+            }
+            scopes.push(scope);
+        }
+        let resolver = Resolver { scopes: &scopes };
+        let mut statements = Vec::new();
+        for (id, file) in self.files.iter().enumerate() {
+            for original in &file.syntax.statements {
+                let mut statement = original.clone();
+                resolver.statement(&mut statement, id, true)?;
+                statements.push(statement);
+            }
+        }
+        Ok(statements)
+    }
+}
+
+fn builtin_type(name: &str) -> bool {
+    matches!(name, "int" | "float" | "bool" | "string" | "result")
+}
+
+struct Resolver<'a> {
+    scopes: &'a [Scope],
+}
+
+impl Resolver<'_> {
+    fn name(
+        &self,
+        name: &str,
+        module: usize,
+        kind: SymbolKind,
+        span: Span,
+        public: bool,
+    ) -> Result<String, CompileError> {
+        let (owner, member, imported) = if let Some((alias, member)) = name.split_once("::") {
+            let owner = self.scopes[module].imports.get(alias).ok_or_else(|| {
+                error(
+                    format!(
+                        "Unknown module alias {alias:?}; import the module before using {name:?}"
+                    ),
+                    span,
+                )
+            })?;
+            (*owner, member, true)
+        } else {
+            (module, name, false)
+        };
+        let symbol = self.scopes[owner].symbols.get(member);
+        let Some(symbol) = symbol else {
+            // Existing built-ins and undefined unqualified calls retain the
+            // established type-checker diagnostics and suggestions.
+            if !imported && kind == SymbolKind::Function {
+                return Ok(name.to_owned());
+            }
+            return Err(error(
+                format!(
+                    "Unknown {} {name:?}",
+                    if kind == SymbolKind::Record {
+                        "record type"
+                    } else {
+                        "function"
+                    }
+                ),
+                span,
+            ));
+        };
+        if imported && !symbol.exported {
+            return Err(error(
+                format!("{name:?} is private; add 'export' to its declaration to import it"),
+                span,
+            ));
+        }
+        if symbol.kind != kind {
+            return Err(error(
+                format!(
+                    "{name:?} is not a {}",
+                    if kind == SymbolKind::Record {
+                        "record type"
+                    } else {
+                        "function"
+                    }
+                ),
+                span,
+            ));
+        }
+        if public && !symbol.exported {
+            return Err(error(
+                format!(
+                    "Exported declaration exposes private record type {name:?}; export the record or keep the declaration private"
+                ),
+                span,
+            ));
+        }
+        Ok(symbol.lowered.clone())
+    }
+
+    fn annotation(
+        &self,
+        ty: &mut crate::ast::FieldType,
+        module: usize,
+        span: Span,
+        public: bool,
+    ) -> Result<(), CompileError> {
+        if let crate::ast::FieldType::Named(name) = ty {
+            *name = self.name(name, module, SymbolKind::Record, span, public)?;
+        }
+        Ok(())
+    }
+
+    fn statement(
+        &self,
+        statement: &mut crate::ast::Stmt,
+        module: usize,
+        top_level: bool,
+    ) -> Result<(), CompileError> {
+        use crate::ast::StmtKind::*;
+        let span = statement.span;
+        match &mut statement.kind {
+            Function {
+                name,
+                parameters,
+                return_type,
+                return_span,
+                body,
+            } => {
+                if !top_level {
+                    return Err(error("Functions must be declared at the top level", span));
+                }
+                let public = self.scopes[module].symbols[name].exported;
+                *name = self.name(name, module, SymbolKind::Function, span, false)?;
+                for parameter in parameters {
+                    self.annotation(&mut parameter.ty, module, parameter.ty_span, public)?;
+                }
+                self.annotation(return_type, module, *return_span, public)?;
+                for statement in body {
+                    self.statement(statement, module, false)?;
+                }
+            }
+            Record { name, fields } => {
+                if !top_level {
+                    return Err(error("Records must be declared at the top level", span));
+                }
+                let public = self.scopes[module].symbols[name].exported;
+                *name = self.name(name, module, SymbolKind::Record, span, false)?;
+                for field in fields {
+                    self.annotation(&mut field.ty, module, field.span, public)?;
+                }
+            }
+            Set { value, .. }
+            | Assign { value, .. }
+            | AssignField { value, .. }
+            | Show(value)
+            | Return(value) => self.expression(value, module)?,
+            If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                self.expression(condition, module)?;
+                for statement in then_body.iter_mut().chain(else_body) {
+                    self.statement(statement, module, false)?;
+                }
+            }
+            While { condition, body } => {
+                self.expression(condition, module)?;
+                for statement in body {
+                    self.statement(statement, module, false)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn expression(&self, expr: &mut crate::ast::Expr, module: usize) -> Result<(), CompileError> {
+        use crate::ast::ExprKind::*;
+        match &mut expr.kind {
+            Call { name, arguments } => {
+                *name = self.name(name, module, SymbolKind::Function, expr.span, false)?;
+                for argument in arguments {
+                    self.expression(argument, module)?;
+                }
+            }
+            RecordInit { name, fields } => {
+                *name = self.name(name, module, SymbolKind::Record, expr.span, false)?;
+                for field in fields {
+                    self.expression(&mut field.value, module)?;
+                }
+            }
+            Identifier(name) if name.contains("::") => {
+                return Err(error(
+                    format!(
+                        "Qualified name {name:?} must be used as a function call or record initializer"
+                    ),
+                    expr.span,
+                ));
+            }
+            Array(items) => {
+                for item in items {
+                    self.expression(item, module)?;
+                }
+            }
+            Error { code, .. } | Negate(code) | FieldAccess { object: code, .. } => {
+                self.expression(code, module)?
+            }
+            Index { array, index } => {
+                self.expression(array, module)?;
+                self.expression(index, module)?;
+            }
+            Binary { left, right, .. } => {
+                self.expression(left, module)?;
+                self.expression(right, module)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
