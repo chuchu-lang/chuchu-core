@@ -15,9 +15,20 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub enum CompileError {
+    Located {
+        error: Box<CompileError>,
+        source: Box<crate::source::SourceFile>,
+    },
+    Module {
+        message: String,
+        span: crate::token::Span,
+    },
     UnsupportedExtension(PathBuf),
     MissingDebugSource,
-    SourceRead { path: PathBuf, source: io::Error },
+    SourceRead {
+        path: PathBuf,
+        source: io::Error,
+    },
     InputOutputConflict(PathBuf),
     ConflictingOutputs(PathBuf),
     Lex(LexError),
@@ -30,6 +41,8 @@ pub enum CompileError {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Located { error, .. } => error.fmt(f),
+            Self::Module { message, .. } => f.write_str(message),
             Self::MissingDebugSource => write!(
                 f,
                 "Debug compilation requires a source file; use compile_file_with_options or compile_named_source_with_options"

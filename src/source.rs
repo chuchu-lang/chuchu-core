@@ -13,6 +13,8 @@ pub struct SourceFile {
     path: PathBuf,
     text: String,
     line_starts: Vec<usize>,
+    /// Disjoint byte ranges preserve file identity without changing public Span literals.
+    origins: Vec<(usize, SourceFile)>,
 }
 
 impl SourceFile {
@@ -23,7 +25,42 @@ impl SourceFile {
             path,
             text,
             line_starts,
+            origins: Vec::new(),
         }
+    }
+
+    /// Build a compilation-wide source address space. Each file has a separator
+    /// byte after it, so even its EOF position belongs unambiguously to that file.
+    pub fn bundle(files: Vec<SourceFile>) -> Self {
+        let path = files.first().map(|f| f.path.clone()).unwrap_or_default();
+        let mut text = String::new();
+        let mut origins = Vec::new();
+        for file in files {
+            origins.push((text.len(), file.clone()));
+            text.push_str(file.text());
+            text.push('\n');
+        }
+        let mut bundle = Self::new(path, text);
+        bundle.origins = origins;
+        bundle
+    }
+
+    /// Resolve a compilation-wide offset to the original file and local offset.
+    pub fn origin(&self, offset: usize) -> Option<(&SourceFile, usize)> {
+        if self.origins.is_empty() {
+            return self.text.is_char_boundary(offset).then_some((self, offset));
+        }
+        let index = self.origins.partition_point(|(start, _)| *start <= offset);
+        let (start, file) = self.origins.get(index.checked_sub(1)?)?;
+        let local = offset - start;
+        file.text.is_char_boundary(local).then_some((file, local))
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
+        let single = self.origins.is_empty().then_some(self);
+        single
+            .into_iter()
+            .chain(self.origins.iter().map(|(_, file)| file))
     }
 
     pub fn path(&self) -> &Path {
@@ -35,6 +72,10 @@ impl SourceFile {
 
     /// Reject invalid UTF-8 boundaries, out-of-range offsets and metadata overflow.
     pub fn position(&self, offset: usize) -> Option<SourcePosition> {
+        if !self.origins.is_empty() {
+            let (file, local) = self.origin(offset)?;
+            return file.position(local);
+        }
         if !self.text.is_char_boundary(offset) {
             return None;
         }
@@ -85,5 +126,26 @@ mod tests {
             empty.position(0),
             Some(SourcePosition { line: 1, column: 1 })
         );
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+
+    #[test]
+    fn disjoint_ranges_preserve_eof_and_unicode_positions() {
+        let bundle = SourceFile::bundle(vec![
+            SourceFile::new("main.chuchu".into(), "é".into()),
+            SourceFile::new("math.chuchu".into(), "\nx".into()),
+        ]);
+        assert_eq!(bundle.origin(2).unwrap().0.path(), Path::new("main.chuchu"));
+        assert_eq!(bundle.origin(3).unwrap().0.path(), Path::new("math.chuchu"));
+        assert_eq!(
+            bundle.position(4),
+            Some(SourcePosition { line: 2, column: 1 })
+        );
+        assert!(bundle.origin(1).is_none());
+        assert!(bundle.origin(6).is_none());
     }
 }
