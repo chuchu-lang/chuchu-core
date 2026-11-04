@@ -22,6 +22,8 @@ pub struct ModuleFile {
 pub struct ModuleGraph {
     /// The entry file is always index zero. IDs follow deterministic import order.
     pub files: Vec<ModuleFile>,
+    pub(crate) lex_time: std::time::Duration,
+    pub(crate) parse_time: std::time::Duration,
 }
 
 fn error(message: impl Into<String>, span: Span) -> CompileError {
@@ -38,6 +40,8 @@ impl ModuleGraph {
         match result {
             Ok(_) => Ok(Self {
                 files: loader.files,
+                lex_time: loader.lex_time,
+                parse_time: loader.parse_time,
             }),
             Err(error) if !loader.files.is_empty() => Err(CompileError::Located {
                 error: Box::new(error),
@@ -47,6 +51,37 @@ impl ModuleGraph {
             }),
             Err(error) => Err(error),
         }
+    }
+
+    /// Parse unnamed in-memory source without implicit filesystem access.
+    pub fn parse_source(source: SourceFile) -> Result<Self, CompileError> {
+        let result = (|| {
+            let start = std::time::Instant::now();
+            let tokens = tokenize(source.text()).map_err(CompileError::Lex)?;
+            let lex_time = start.elapsed();
+            let start = std::time::Instant::now();
+            let syntax = Parser::new(tokens)
+                .parse_module()
+                .map_err(CompileError::Parse)?;
+            let parse_time = start.elapsed();
+            if let Some(import) = syntax.imports.first() {
+                return Err(error(
+                    "Relative imports require a source file; use compile_file or compile_named_source_with_options",
+                    import.span,
+                ));
+            }
+            Ok(Self {
+                files: vec![ModuleFile {
+                    source: source.clone(),
+                    offset: 0,
+                    syntax,
+                    dependencies: Vec::new(),
+                }],
+                lex_time,
+                parse_time,
+            })
+        })();
+        result
     }
 
     pub fn sources(&self) -> SourceFile {
@@ -60,6 +95,8 @@ struct Loader {
     identities: HashMap<PathBuf, usize>,
     active: Vec<usize>,
     bytes: usize,
+    lex_time: std::time::Duration,
+    parse_time: std::time::Duration,
 }
 
 impl Loader {
@@ -126,18 +163,22 @@ impl Loader {
             dependencies: Vec::new(),
         });
         self.active.push(id);
+        let start = std::time::Instant::now();
         let mut tokens = tokenize(self.files[id].source.text()).map_err(|mut error| {
             error.span.start += offset;
             error.span.end += offset;
             CompileError::Lex(error)
         })?;
+        self.lex_time += start.elapsed();
         for token in &mut tokens {
             token.span.start += offset;
             token.span.end += offset;
         }
+        let start = std::time::Instant::now();
         let syntax = Parser::new(tokens)
             .parse_module()
             .map_err(CompileError::Parse)?;
+        self.parse_time += start.elapsed();
         if id != 0 {
             if syntax.name.is_none() {
                 return Err(error(

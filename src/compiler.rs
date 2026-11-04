@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use inkwell::context::Context;
 
 use crate::codegen::{CodegenError, generate_program_with_records};
-use crate::lexer::{LexError, tokenize};
+use crate::lexer::LexError;
 use crate::native::{NativeError, NativeTimings, build_executable_with_options};
 use crate::optimization::BuildOptions;
-use crate::parser::{ParseError, Parser};
+use crate::parser::ParseError;
 use crate::symbol_table::SymbolTable;
 use crate::type_checker::{TypeChecker, TypeError};
 use std::time::{Duration, Instant};
@@ -430,8 +430,7 @@ pub fn compile_named_source_with_options(
             ),
         });
     }
-    let source = crate::source::SourceFile::new(path, disk);
-    compile_input(source.text(), Some(&source), output, options)
+    compile_file_with_options(&path, output, options)
 }
 
 fn compile_input(
@@ -445,25 +444,60 @@ fn compile_input(
         return Err(CompileError::MissingDebugSource);
     }
     validate_artifacts(output, options, named.map(|s| s.path()))?;
+    let source = crate::source::SourceFile::new(
+        named.map_or_else(
+            || PathBuf::from("<source>"),
+            |source| source.path().to_owned(),
+        ),
+        source.to_owned(),
+    );
+    let graph = crate::modules::ModuleGraph::parse_source(source)?;
+    let mut timings = compile_graph(&graph, output, options, named.is_some())?;
+    timings.total = total.elapsed();
+    Ok(timings)
+}
+
+fn compile_graph(
+    graph: &crate::modules::ModuleGraph,
+    output: &Path,
+    options: &BuildOptions,
+    named: bool,
+) -> Result<CompilationTimings, CompileError> {
+    let total = Instant::now();
+    for file in &graph.files {
+        validate_artifacts(output, options, named.then_some(file.source.path()))?;
+    }
+    let sources = graph.sources();
+    // Keep the established single-file API's error variants. Multi-file errors
+    // carry the compilation's source registry for CLI and library diagnostics.
+    let locate = |error| {
+        if graph.files.len() > 1 {
+            CompileError::Located {
+                error: Box::new(error),
+                source: Box::new(sources.clone()),
+            }
+        } else {
+            error
+        }
+    };
     let start = Instant::now();
-    let tokens = tokenize(source).map_err(CompileError::Lex)?;
-    let lex = start.elapsed();
-    let start = Instant::now();
-    let statements = Parser::new(tokens)
-        .parse_program()
-        .map_err(CompileError::Parse)?;
-    let parse = start.elapsed();
-    let start = Instant::now();
+    let statements = graph.resolve()?;
     let mut checker = TypeChecker::new(SymbolTable::new());
     checker
         .check_program(&statements)
-        .map_err(CompileError::Type)?;
+        .map_err(|error| locate(CompileError::Type(error)))?;
     let records = checker.record_table().unwrap_or_default();
     let type_check = start.elapsed();
     let start = Instant::now();
     let context = Context::create();
-    let module = generate_program_with_records(&context, &statements, &records, named, options)
-        .map_err(CompileError::Codegen)?;
+    let module = generate_program_with_records(
+        &context,
+        &statements,
+        &records,
+        named.then_some(&sources),
+        options,
+    )
+    .map_err(|error| locate(CompileError::Codegen(error)))?;
     let llvm_generation = start.elapsed();
     let native =
         build_executable_with_options(&module, output, options).map_err(CompileError::Native)?;
@@ -473,8 +507,8 @@ fn compile_input(
         std::mem::forget(context);
     }
     Ok(CompilationTimings {
-        lex,
-        parse,
+        lex: graph.lex_time,
+        parse: graph.parse_time,
         type_check,
         llvm_generation,
         native,
@@ -492,19 +526,8 @@ pub fn compile_file_with_options(
     options: &BuildOptions,
 ) -> Result<CompilationTimings, CompileError> {
     let total = Instant::now();
-    if input
-        .extension()
-        .is_none_or(|extension| extension != "chuchu")
-    {
-        return Err(CompileError::UnsupportedExtension(input.to_owned()));
-    }
-    let source = std::fs::read_to_string(input).map_err(|source| CompileError::SourceRead {
-        path: input.to_owned(),
-        source,
-    })?;
-    validate_artifacts(output, options, Some(input))?;
-    let named = crate::source::SourceFile::new(identity(input), source);
-    let mut timing = compile_input(named.text(), Some(&named), output, options)?;
+    let graph = crate::modules::ModuleGraph::load(input)?;
+    let mut timing = compile_graph(&graph, output, options, true)?;
     timing.total = total.elapsed();
     Ok(timing)
 }
