@@ -122,8 +122,32 @@ Compile the entry file as usual: `cheeku main.chuchu -o program`. Imports use
 `alias::name`; declarations are private unless marked `export`. Imported files
 contain declarations rather than executable top-level statements.
 
-See [module rules and diagnostics](MODULES.md) and the
-[multi-file example](examples/modules/main.chuchu), including imported records.
+Each file is one module. Imported files must begin with `module name`; the entry
+file may omit it. Imports belong before declarations and executable statements,
+and paths resolve relative to the importing file. Use explicit relative
+`.chuchu` paths with `/` separators. The alias controls qualified access; the
+module declaration supplies a descriptive name.
+
+- Export functions and records with `export function` and `export record`.
+  Qualified record types and initializers also use `alias::Name`.
+- Exported signatures and record fields must use public record types.
+  Records from different modules remain distinct types, even with equal fields.
+- Import aliases and top-level declarations must have unique names within their
+  module. Missing modules, unknown or private members, duplicate names, and
+  circular imports produce diagnostics with source locations and import context.
+- Each canonical file is loaded once. All reachable files are checked and compiled
+  into one executable through the existing native linker.
+- File-based compiler APIs resolve imports automatically. The named-source API
+  verifies its entry text against disk. Unnamed source APIs cannot resolve imports
+  because they have no base directory.
+
+Existing single-file programs need no module declaration or exports. `module`,
+`import`, and `export` are reserved keywords. Packages, wildcard imports,
+re-exports, exported variables, and executable library initialization are not
+supported.
+
+See the [multi-file example](examples/modules/main.chuchu), including imported
+records and private helpers. It prints `5`, `3`, and `5` on separate lines.
 
 ## Comments
 
