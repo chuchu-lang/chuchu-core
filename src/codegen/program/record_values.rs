@@ -40,7 +40,7 @@ impl<'ctx> Generator<'ctx> {
             }
             let value = self.expression(&initializer.value)?;
             // The same conversion as elsewhere: an int fills a float field.
-            *slot = Some(self.cast(value, field.ty, initializer.value.span)?.raw);
+            *slot = Some(self.cast(value, &field.ty, initializer.value.span)?.raw);
         }
         let mut aggregate = layout.struct_type().get_undef();
         for (field, slot) in layout.fields().iter().zip(slots) {
@@ -115,7 +115,7 @@ impl<'ctx> Generator<'ctx> {
             let (address, field_ty) = self.field_pointer(pointer, ty, field, span)?;
             let raw = build(
                 self.builder
-                    .build_load(self.llvm_type(field_ty, span)?, address, field),
+                    .build_load(self.llvm_type(&field_ty, span)?, address, field),
                 span,
             )?;
             return self.copy_value(Value { raw, ty: field_ty }, span);
@@ -160,7 +160,7 @@ impl<'ctx> Generator<'ctx> {
         for field in &target.fields {
             (pointer, ty) = self.field_pointer(pointer, ty, &field.name, field.span)?;
         }
-        let value = self.cast(value, ty, span)?;
+        let value = self.cast(value, &ty, span)?;
         self.release_at(pointer, ty, span)?;
         build(self.builder.build_store(pointer, value.raw), span)?;
         Ok(())

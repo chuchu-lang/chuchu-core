@@ -22,7 +22,6 @@ pub enum TokenKind {
     Return,
     Err,
     /// Record type declaration keyword: `record`.
-    /// Record definition keyword: `record`.
     Record,
 
     Plus,
@@ -47,10 +46,6 @@ pub enum TokenKind {
 
     LeftBrace,
     RightBrace,
-    Comma,
-    Colon,
-    /// Member-access operator: `.`.
-    Dot,
 
     Newline,
     Eof,

@@ -65,13 +65,6 @@ struct Function<'ctx> {
     result: Type,
 }
 
-#[derive(Clone)]
-struct RecordInfo<'ctx> {
-    struct_type: inkwell::types::StructType<'ctx>,
-    fields: Vec<(String, Type)>,
-    field_indices: HashMap<String, u32>,
-}
-
 struct Generator<'ctx> {
     context: &'ctx Context,
     // The DI builder finalizes on drop and must be disposed before its module,
@@ -83,7 +76,6 @@ struct Generator<'ctx> {
     functions: HashMap<String, Function<'ctx>>,
     /// The layout of every declared record; empty for a program without records.
     records: RecordLayouts<'ctx>,
-    records: HashMap<String, RecordInfo<'ctx>>,
     result: Type,
 }
 
@@ -145,44 +137,8 @@ pub(super) fn generate_with_records<'ctx>(
         scopes: vec![HashMap::new()],
         functions: HashMap::new(),
         records,
-        records: HashMap::new(),
         result: Type::Int,
     };
-    for statement in statements {
-        if let StmtKind::Record { name, fields } = &statement.kind {
-            if generator.records.contains_key(name) {
-                return Err(CodegenError::DuplicateDeclaration {
-                    name: name.clone(),
-                    span: statement.span,
-                });
-            }
-            let struct_type = context.opaque_struct_type(&format!("chuchu.record.{name}"));
-            let mut field_indices = HashMap::new();
-            let mut field_list = Vec::new();
-            for (idx, field) in fields.iter().enumerate() {
-                field_indices.insert(field.name.clone(), idx as u32);
-                field_list.push((field.name.clone(), field.ty.clone()));
-            }
-            generator.records.insert(
-                name.clone(),
-                RecordInfo {
-                    struct_type,
-                    fields: field_list,
-                    field_indices,
-                },
-            );
-        }
-    }
-    for statement in statements {
-        if let StmtKind::Record { name, fields } = &statement.kind {
-            let llvm_fields = fields
-                .iter()
-                .map(|f| generator.llvm_type(&f.ty, f.span))
-                .collect::<Result<Vec<_>, _>>()?;
-            let record_info = generator.records.get(name).unwrap();
-            record_info.struct_type.set_body(&llvm_fields, false);
-        }
-    }
     for statement in statements {
         if let StmtKind::Function {
             name,
@@ -208,10 +164,9 @@ pub(super) fn generate_with_records<'ctx>(
             let params = parameter_types
                 .iter()
                 .zip(parameters)
-                .map(|(ty, p)| generator.llvm_type(*ty, p.span).map(Into::into))
-                .map(|p| generator.llvm_type(&p.ty, p.span).map(Into::into))
+                .map(|(ty, p)| generator.llvm_type(ty, p.span).map(Into::into))
                 .collect::<Result<Vec<_>, _>>()?;
-            let result_type = generator.llvm_type(return_type, statement.span)?;
+            let result_type = generator.llvm_type(&return_type, statement.span)?;
             let value = generator.module.add_function(
                 &format!("chuchu.{name}"),
                 result_type.fn_type(&params, false),
@@ -223,8 +178,6 @@ pub(super) fn generate_with_records<'ctx>(
                     value,
                     parameters: parameter_types,
                     result: return_type,
-                    parameters: parameters.iter().map(|p| p.ty.clone()).collect(),
-                    result: return_type.clone(),
                 },
             );
         }
@@ -251,16 +204,11 @@ pub(super) fn generate_with_records<'ctx>(
                 .position_at_end(context.append_basic_block(function, "entry"));
             generator.builder.unset_current_debug_location();
             if generator.debug.is_some() {
-                let result = generator.llvm_type(return_type, statement.span)?;
+                let result = generator.llvm_type(&return_type, statement.span)?;
                 let params = parameters
                     .iter()
                     .zip(&signature.parameters)
-                    .map(|(p, ty)| generator.llvm_type(*ty, p.span).map(|llvm| (*ty, llvm)))
-                    .map(|p| {
-                        generator
-                            .llvm_type(&p.ty, p.span)
-                            .map(|llvm| (p.ty.clone(), llvm))
-                    })
+                    .map(|(p, ty)| generator.llvm_type(ty, p.span).map(|llvm| (*ty, llvm)))
                     .collect::<Result<Vec<_>, _>>()?;
                 if let Some(debug) = &mut generator.debug {
                     debug.function(
@@ -285,7 +233,6 @@ pub(super) fn generate_with_records<'ctx>(
                     Value {
                         raw: value,
                         ty: *ty,
-                        ty: parameter.ty.clone(),
                     },
                     parameter.span,
                     Some(
@@ -387,7 +334,7 @@ impl<'ctx> Generator<'ctx> {
                 .into(),
             Type::Record(id) => self
                 .records
-                .get(id)
+                .get(*id)
                 .ok_or(invalid("Record type has no layout", span))?
                 .struct_type()
                 .into(),
@@ -398,13 +345,6 @@ impl<'ctx> Generator<'ctx> {
                 self.llvm_type(&element.scalar(), span)?
                     .array_type(u32::try_from(*len).map_err(|_| invalid("Array too large", span))?)
                     .into()
-            }
-            Type::Record(name) => {
-                let rec = self
-                    .records
-                    .get(name)
-                    .ok_or_else(|| invalid("Unknown record type", span))?;
-                rec.struct_type.into()
             }
         })
     }
@@ -604,83 +544,6 @@ impl<'ctx> Generator<'ctx> {
                     .into(),
                 ty: Type::Bool,
             }),
-            ExprKind::RecordInit { name, fields } => {
-                let rec = self
-                    .records
-                    .get(name)
-                    .ok_or_else(|| invalid("Unknown record type", span))?
-                    .clone();
-                let pointer = self.allocate(&Type::Record(name.clone()), span)?;
-                for (field_name, field_expr) in fields {
-                    let field_idx = *rec
-                        .field_indices
-                        .get(field_name)
-                        .ok_or_else(|| invalid("Unknown record field", span))?;
-                    let expected_ty = &rec.fields[field_idx as usize].1;
-                    let val = self.expression(field_expr)?;
-                    let val = self.cast(val, expected_ty, span)?;
-                    let field_ptr = build(
-                        self.builder.build_struct_gep(
-                            rec.struct_type,
-                            pointer,
-                            field_idx,
-                            &format!("{name}.{field_name}"),
-                        ),
-                        span,
-                    )?;
-                    build(self.builder.build_store(field_ptr, val.raw), span)?;
-                }
-                let raw = build(
-                    self.builder
-                        .build_load(rec.struct_type, pointer, &format!("{name}.val")),
-                    span,
-                )?;
-                Ok(Value {
-                    raw,
-                    ty: Type::Record(name.clone()),
-                })
-            }
-            ExprKind::FieldAccess { target, field } => {
-                let target_val = self.expression(target)?;
-                let Type::Record(ref rec_name) = target_val.ty else {
-                    return Err(invalid("Field access on non-record type", span));
-                };
-                let rec = self
-                    .records
-                    .get(rec_name)
-                    .ok_or_else(|| invalid("Unknown record type", span))?
-                    .clone();
-                let field_idx = *rec
-                    .field_indices
-                    .get(field)
-                    .ok_or_else(|| invalid("Unknown record field", span))?;
-                let field_ty = rec.fields[field_idx as usize].1.clone();
-                let pointer = self.spill(&target_val, span)?;
-                let field_ptr = build(
-                    self.builder.build_struct_gep(
-                        rec.struct_type,
-                        pointer,
-                        field_idx,
-                        &format!("field.{field}"),
-                    ),
-                    span,
-                )?;
-                let raw = build(
-                    self.builder
-                        .build_load(self.llvm_type(&field_ty, span)?, field_ptr, field),
-                    span,
-                )?;
-                let val = Value { raw, ty: field_ty };
-                if val.ty == Type::String {
-                    self.copy_string(val, span)
-                } else if val.ty == Type::Result(ScalarType::String) {
-                    self.copy_result(val, span)
-                } else if matches!(val.ty, Type::Record(_)) && val.ty.owns_string() {
-                    self.copy_record(val, span)
-                } else {
-                    Ok(val)
-                }
-            }
             ExprKind::Identifier(name) => {
                 let binding = self.lookup(name, span)?;
                 let value = Value {
@@ -695,15 +558,7 @@ impl<'ctx> Generator<'ctx> {
                     ty: binding.ty,
                 };
                 // Reading a variable gives an independent copy of what it owns.
-                if value.ty == Type::String {
-                    self.copy_string(value, span)
-                } else if value.ty == Type::Result(ScalarType::String) {
-                    self.copy_result(value, span)
-                } else if matches!(value.ty, Type::Record(_)) && value.ty.owns_string() {
-                    self.copy_record(value, span)
-                } else {
-                    Ok(value)
-                }
+                self.copy_value(value, span)
             }
             ExprKind::Negate(inner) => {
                 if let ExprKind::Integer(literal) = &inner.kind
@@ -1121,34 +976,6 @@ impl<'ctx> Generator<'ctx> {
                 build(self.builder.build_store(binding.pointer, value.raw), span)?;
                 Ok(())
             }
-            StmtKind::AssignField {
-                target,
-                field,
-                value,
-            } => {
-                let (field_ptr, field_ty) = self.lvalue_field_pointer(target, field, span)?;
-                let val = self.expression(value)?;
-                let val = self.cast(val, &field_ty, span)?;
-                if field_ty.owns_string() {
-                    let old_raw = build(
-                        self.builder.build_load(
-                            self.llvm_type(&field_ty, span)?,
-                            field_ptr,
-                            "field.old",
-                        ),
-                        span,
-                    )?;
-                    self.release_value(
-                        Value {
-                            raw: old_raw,
-                            ty: field_ty,
-                        },
-                        span,
-                    )?;
-                }
-                build(self.builder.build_store(field_ptr, val.raw), span)?;
-                Ok(())
-            }
             StmtKind::Show(expr) => {
                 let value = self.expression(expr)?;
                 self.output(value.clone(), span)?;
@@ -1226,135 +1053,7 @@ impl<'ctx> Generator<'ctx> {
                 Ok(())
             }
             StmtKind::Function { .. } => Err(invalid("Nested functions are unsupported", span)),
-            StmtKind::Record { .. } => Err(invalid("Record declarations are unsupported", span)),
             StmtKind::AssignField { target, value } => self.assign_field(target, value, span),
-        }
-    }
-    pub(super) fn copy_record(
-        &mut self,
-        value: Value<'ctx>,
-        span: Span,
-    ) -> Result<Value<'ctx>, CodegenError> {
-        let Type::Record(ref name) = value.ty else {
-            return Ok(value);
-        };
-        let rec = self
-            .records
-            .get(name)
-            .ok_or_else(|| invalid("Unknown record type", span))?
-            .clone();
-        let pointer = self.spill(&value, span)?;
-        let new_ptr = self.allocate(&value.ty, span)?;
-
-        for (idx, (fname, fty)) in rec.fields.iter().enumerate() {
-            let src_field_ptr = build(
-                self.builder.build_struct_gep(
-                    rec.struct_type,
-                    pointer,
-                    idx as u32,
-                    &format!("src.{fname}"),
-                ),
-                span,
-            )?;
-            let dst_field_ptr = build(
-                self.builder.build_struct_gep(
-                    rec.struct_type,
-                    new_ptr,
-                    idx as u32,
-                    &format!("dst.{fname}"),
-                ),
-                span,
-            )?;
-            let raw_val = build(
-                self.builder
-                    .build_load(self.llvm_type(fty, span)?, src_field_ptr, fname),
-                span,
-            )?;
-            let mut field_val = Value {
-                raw: raw_val,
-                ty: fty.clone(),
-            };
-            if fty == &Type::String {
-                field_val = self.copy_string(field_val, span)?;
-            } else if fty == &Type::Result(ScalarType::String) {
-                field_val = self.copy_result(field_val, span)?;
-            } else if matches!(fty, Type::Record(_)) && fty.owns_string() {
-                field_val = self.copy_record(field_val, span)?;
-            }
-            build(self.builder.build_store(dst_field_ptr, field_val.raw), span)?;
-        }
-        let raw = build(
-            self.builder
-                .build_load(rec.struct_type, new_ptr, &format!("{name}.copy")),
-            span,
-        )?;
-        Ok(Value { raw, ty: value.ty })
-    }
-
-    fn lvalue_field_pointer(
-        &mut self,
-        target: &Expr,
-        field: &str,
-        span: Span,
-    ) -> Result<(PointerValue<'ctx>, Type), CodegenError> {
-        match &target.kind {
-            ExprKind::Identifier(name) => {
-                let binding = self.lookup(name, target.span)?;
-                let Type::Record(ref rec_name) = binding.ty else {
-                    return Err(invalid("Expected record", target.span));
-                };
-                let rec = self
-                    .records
-                    .get(rec_name)
-                    .ok_or_else(|| invalid("Unknown record", target.span))?
-                    .clone();
-                let field_idx = *rec
-                    .field_indices
-                    .get(field)
-                    .ok_or_else(|| invalid("Unknown field", span))?;
-                let field_ptr = build(
-                    self.builder.build_struct_gep(
-                        rec.struct_type,
-                        binding.pointer,
-                        field_idx,
-                        "field.ptr",
-                    ),
-                    span,
-                )?;
-                let field_ty = rec.fields[field_idx as usize].1.clone();
-                Ok((field_ptr, field_ty))
-            }
-            ExprKind::FieldAccess {
-                target: inner_target,
-                field: inner_field,
-            } => {
-                let (parent_ptr, parent_ty) =
-                    self.lvalue_field_pointer(inner_target, inner_field, target.span)?;
-                let Type::Record(ref rec_name) = parent_ty else {
-                    return Err(invalid("Expected record", target.span));
-                };
-                let rec = self
-                    .records
-                    .get(rec_name)
-                    .ok_or_else(|| invalid("Unknown record", target.span))?
-                    .clone();
-                let field_idx = *rec
-                    .field_indices
-                    .get(field)
-                    .ok_or_else(|| invalid("Unknown field", span))?;
-                let field_ptr = build(
-                    self.builder.build_struct_gep(
-                        rec.struct_type,
-                        parent_ptr,
-                        field_idx,
-                        "field.ptr",
-                    ),
-                    span,
-                )?;
-                let field_ty = rec.fields[field_idx as usize].1.clone();
-                Ok((field_ptr, field_ty))
-            }
-            _ => Err(invalid("Invalid assignment target", target.span)),
         }
     }
 }

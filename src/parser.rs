@@ -142,7 +142,6 @@ impl Parser {
             TokenKind::Identifier(name) if name == "float" => Type::Float,
             TokenKind::Identifier(name) if name == "bool" => Type::Bool,
             TokenKind::Identifier(name) if name == "string" => Type::String,
-            TokenKind::Identifier(name) => Type::Record(name.clone()),
             _ => {
                 return Err(ParseError::ExpectedToken {
                     expected: "type annotation",
@@ -254,7 +253,7 @@ impl Parser {
                 let end = value.span.end;
                 (StmtKind::Set { name, value }, end)
             }
-            TokenKind::Record => {
+            TokenKind::Reassign => {
                 self.advance();
                 let target_start = self.position;
                 let (name, _) = self.name()?;
@@ -281,50 +280,6 @@ impl Parser {
                     let end = value.span.end;
                     (StmtKind::Assign { name, value }, end)
                 }
-                self.require(TokenKind::LeftBrace, "'{'")?;
-                let mut fields = Vec::new();
-                self.newlines()?;
-                if !self.at(&TokenKind::RightBrace) {
-                    loop {
-                        let (field_name, span) = self.name()?;
-                        self.require(TokenKind::Colon, "':'")?;
-                        let ty = self.annotation()?;
-                        fields.push(crate::ast::RecordFieldDef {
-                            name: field_name,
-                            ty,
-                            span,
-                        });
-                        self.newlines()?;
-                        if self.at(&TokenKind::Comma) {
-                            self.advance();
-                            self.newlines()?;
-                        }
-                        if self.at(&TokenKind::RightBrace) {
-                            break;
-                        }
-                    }
-                }
-                let end = self.require(TokenKind::RightBrace, "'}'")?.span.end;
-                (StmtKind::Record { name, fields }, end)
-            }
-            TokenKind::Reassign => {
-                self.advance();
-                let target = self.parse_expression()?;
-                self.require(TokenKind::As, "'as'")?;
-                let value = self.parse_expression()?;
-                let end = value.span.end;
-                let kind = match target.kind {
-                    ExprKind::Identifier(name) => StmtKind::Assign { name, value },
-                    ExprKind::FieldAccess { target, field } => StmtKind::AssignField {
-                        target,
-                        field,
-                        value,
-                    },
-                    _ => {
-                        return Err(ParseError::ExpectedIdentifier { span: target.span });
-                    }
-                };
-                (kind, end)
             }
             TokenKind::Show | TokenKind::Return => {
                 self.advance();
@@ -708,7 +663,7 @@ impl Parser {
                 };
                 expression = Expr {
                     kind: ExprKind::FieldAccess {
-                        target: Box::new(expression),
+                        object: Box::new(expression),
                         field,
                     },
                     span,
@@ -1271,7 +1226,7 @@ mod tests {
 
     #[test]
     fn parses_record_declaration_instantiation_and_field_access() {
-        let source = "record Point { x: int, y: int }\nassign p as Point { x: 10, y: 20 }\nreassign p.x as 30\nshow p.x";
+        let source = "record Point {\n x: int\n y: int\n}\nassign p as Point {\n x: 10\n y: 20\n}\nreassign p.x as 30\nshow p.x";
         let mut parser = Parser::new(tokenize(source).unwrap());
         let stmts = parser
             .parse_program()
@@ -1299,8 +1254,8 @@ mod tests {
                     ExprKind::RecordInit { name, fields } => {
                         assert_eq!(name, "Point");
                         assert_eq!(fields.len(), 2);
-                        assert_eq!(fields[0].0, "x");
-                        assert_eq!(fields[1].0, "y");
+                        assert_eq!(fields[0].name, "x");
+                        assert_eq!(fields[1].name, "y");
                     }
                     _ => panic!("Expected RecordInit"),
                 }
@@ -1310,16 +1265,10 @@ mod tests {
 
         // 3. Field reassignment
         match &stmts[2].kind {
-            StmtKind::AssignField {
-                target,
-                field,
-                value,
-            } => {
-                match &target.kind {
-                    ExprKind::Identifier(name) => assert_eq!(name, "p"),
-                    _ => panic!("Expected Identifier target"),
-                }
-                assert_eq!(field, "x");
+            StmtKind::AssignField { target, value } => {
+                assert_eq!(target.variable, "p");
+                assert_eq!(target.fields.len(), 1);
+                assert_eq!(target.fields[0].name, "x");
                 match &value.kind {
                     ExprKind::Integer(v) => assert_eq!(v, "30"),
                     _ => panic!("Expected Integer value"),
@@ -1331,8 +1280,8 @@ mod tests {
         // 4. Field access
         match &stmts[3].kind {
             StmtKind::Show(expr) => match &expr.kind {
-                ExprKind::FieldAccess { target, field } => {
-                    match &target.kind {
+                ExprKind::FieldAccess { object, field } => {
+                    match &object.kind {
                         ExprKind::Identifier(name) => assert_eq!(name, "p"),
                         _ => panic!("Expected Identifier target"),
                     }

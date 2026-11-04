@@ -262,28 +262,6 @@ impl<'ctx> DebugState<'ctx> {
                     )
                     .as_type()
             }
-            Type::Record(ref name) => {
-                let BasicTypeEnum::StructType(_structure) = llvm else {
-                    unreachable!("record lowering type")
-                };
-                let scope = self.unit.as_debug_info_scope();
-                self.builder
-                    .create_struct_type(
-                        scope,
-                        name,
-                        self.unit.get_file(),
-                        0,
-                        bits,
-                        self.data.get_abi_alignment(&llvm) * 8,
-                        DIFlags::ZERO,
-                        None,
-                        &[],
-                        0,
-                        None,
-                        "",
-                    )
-                    .as_type()
-            }
             _ => {
                 let (name, encoding) = match ty {
                     Type::Int => ("Int", 0x05),     // DW_ATE_signed
