@@ -205,8 +205,17 @@ const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "resul
 /// A field's span runs from its name to the end of its type, so the type name is
 /// the last `type_name.len()` bytes.
 fn type_name_span(field: &RecordField, type_name: &str) -> Span {
+    // Resolved module identities are longer than their source spelling. In that
+    // case highlight the field rather than subtracting an internal name length.
+    if type_name.contains('[') {
+        return field.span;
+    }
     Span {
-        start: field.span.end - type_name.len(),
+        start: field
+            .span
+            .end
+            .saturating_sub(type_name.len())
+            .max(field.span.start),
         end: field.span.end,
     }
 }

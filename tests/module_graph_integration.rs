@@ -196,3 +196,61 @@ fn rejects_visibility_and_binding_errors() {
         assert!(rendered.contains(expected), "{rendered}");
     }
 }
+
+#[test]
+fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nassign p as a::Point {\nx: 2\n}\nassign box as b::Box {\np: p\n}\nshow b::get(box).x",
+        ),
+        ("a.chuchu", "module a\nexport record Point {\nx: int\n}"),
+        (
+            "b.chuchu",
+            "module b\nimport \"a.chuchu\" as a\nexport record Box {\np: a::Point\n}\nexport function get(box: Box) be a::Point {\nreturn box.p\n}",
+        ),
+    ]);
+    let graph = project.load().unwrap();
+    let statements = graph.resolve().unwrap();
+    let mut checker =
+        chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
+    checker.check_program(&statements).unwrap();
+    assert_eq!(checker.record_table().unwrap().len(), 2);
+
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"a.chuchu\" as a\nimport \"b.chuchu\" as b\nassign p as a::Point {\nx: 2\n}\nshow b::get(p)",
+        ),
+        ("a.chuchu", "module same\nexport record Point {\nx: int\n}"),
+        (
+            "b.chuchu",
+            "module same\nexport record Point {\nx: int\n}\nexport function get(p: Point) be int {\nreturn p.x\n}",
+        ),
+    ]);
+    let statements = project.load().unwrap().resolve().unwrap();
+    let mut checker =
+        chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
+    assert!(matches!(
+        checker.check_program(&statements),
+        Err(chuchu::type_checker::TypeError::RecordMismatch { .. })
+    ));
+}
+
+#[test]
+fn recursive_module_records_report_errors_without_span_underflow() {
+    let project = Project::new(&[
+        ("main.chuchu", "import \"a.chuchu\" as a"),
+        (
+            "a.chuchu",
+            "module a_very_long_module_name\nrecord A {\nx: B\n}\nrecord B {\nx: A\n}",
+        ),
+    ]);
+    let statements = project.load().unwrap().resolve().unwrap();
+    let mut checker =
+        chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
+    assert!(matches!(
+        checker.check_program(&statements),
+        Err(chuchu::type_checker::TypeError::RecursiveRecord { .. })
+    ));
+}
