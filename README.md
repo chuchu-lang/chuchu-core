@@ -231,8 +231,11 @@ Linux x64 GNU, and Windows x64 MSVC. SDK downloads are pinned and SHA-256 checke
 Both macOS targets and Windows build LLVM from the same verified source release
 (the official ARM64 macOS SDK ships only bitcode archives that Apple's linker
 rejects); built SDKs are cached per platform. Every job runs native programs and
-packages only after its tests pass. The manually dispatched release workflow
-requires all four jobs and creates a draft, not an unreviewed public release.
+packages only after its tests pass. The release workflow runs for version tags
+or manual dispatches, requires all four jobs, and stages a draft. After production
+approval, it deploys verified installers to S3 through OIDC, publishes `latest.json`
+last, verifies CloudFront, and finalizes the GitHub Release. Ordinary merges run
+quick checks. See the [deployment guide](docs/aws-installer-releases.md) for setup.
 
 Archives require external toolchains/runtimes; see
 [release requirements](docs/release-runtime.md). [Contributing](CONTRIBUTING.md)

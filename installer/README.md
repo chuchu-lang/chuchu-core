@@ -3,7 +3,8 @@
 Production downloads are served from **AWS S3 through CloudFront** at
 `https://downloads.chuchu-lang.org`. The default update manifest is
 `https://downloads.chuchu-lang.org/latest.json`. Packaging prepares artifacts
-locally; it does not upload to S3 or enable automatic background updates.
+locally. The tag-triggered release workflow publishes verified artifacts to S3
+after production approval; compiler updates remain explicit.
 
 Override `--base-url` when packaging and assembling for a different host. For
 that override, build the manager with the compile-time
@@ -141,17 +142,32 @@ python3 installer/assemble.py --directory target/distributions --version 0.1.0
 The assembler checks every target and artifact checksum, then writes `latest.json`
 and `SHA256SUMS`. Upload the **versioned artifacts first** to the S3 origin so
 they are served directly under `https://downloads.chuchu-lang.org/`. Upload
-`latest.json` last, after the referenced files are available. Configure `latest.json` for revalidation/no-cache and immutable cache
-headers for versioned files. Keep previous artifacts available for recovery.
+`latest.json` last, after the referenced files are available. The automated
+publisher applies no-cache headers to `latest.json` and immutable cache headers
+to versioned files. Keep previous artifacts available for recovery.
 Never overwrite an existing published version with different bytes.
 
-The manual release workflow validates an existing tag against Cargo's version,
-builds that exact commit on four native runners, tests installation and updates,
-assembles the download manifest, and creates a GitHub **draft** as a staging area.
-The manager build, packaging, and assembly use matching production URLs.
-GitHub is not required as the user's download host. Automatic tag triggers stay
-disabled. Uploading to S3 remains an explicit publishing step; the workflows
-contain no AWS credentials or automatic S3 uploads.
+The release workflow runs for `v*` tag pushes or manual dispatches, validates the
+version and tagged commit's ancestry from protected `main`, and builds that exact
+commit on four native runners. After all tests pass, it stages a GitHub draft,
+waits for the `production` environment approval, authenticates with AWS through
+OIDC, and uploads verified artifacts to the existing private S3 bucket. It
+publishes `latest.json` last using a conditional write, verifies CloudFront, then
+finalizes the GitHub Release. Ordinary merges only run quick checks.
+
+The manager build, packaging and assembly use matching production URLs. The
+manifest schema and manager update/verification behavior are unchanged. No AWS
+keys are stored in source. The publisher prevents immutable artifact overwrites,
+checks every expected file, supports identical retries and refuses downgrades.
+Assembly retains `cheeku-<version>.json` and `SHA256SUMS-<version>` for recovery.
+The original `SHA256SUMS` remains attached to GitHub; S3 serves versioned checksum
+files so different releases cannot overwrite one unversioned checksum inventory.
+
+See [AWS installer release deployment](../docs/aws-installer-releases.md) for
+required IAM policies, GitHub production reviewers and variables, publishing,
+verification, retries and manual rollback. These settings must be configured by
+the owner before the first public release. Native packaging itself still never
+uploads; only the dedicated deployment job does.
 
 ## Validation and remaining platform work
 

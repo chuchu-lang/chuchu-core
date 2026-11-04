@@ -4,9 +4,11 @@ import argparse
 import json
 from pathlib import Path
 from package import TARGETS, digest
+from release_artifacts import version_key
 
 
 def assemble(directory, version, base_url, require_all=True):
+    version_key(version)
     platforms = {}
     for path in sorted(directory.glob(f'cheeku-{version}-*.json')):
         manifest = json.loads(path.read_text())
@@ -29,6 +31,12 @@ def assemble(directory, version, base_url, require_all=True):
         raise ValueError('No release manifests found')
     result = {'schema_version': 1, 'version': version, 'update_url': base_url.rstrip('/') + '/latest.json', 'platforms': platforms}
     (directory / 'latest.json').write_text(json.dumps(result, indent=2) + '\n')
+    # Retain an immutable rollback snapshot and checksum inventory per release.
+    (directory / f'cheeku-{version}.json').write_bytes((directory / 'latest.json').read_bytes())
+    version_sums = directory / f'SHA256SUMS-{version}'
+    immutable = [path for path in sorted(directory.iterdir())
+                 if path.is_file() and path.name not in {'latest.json', 'SHA256SUMS', version_sums.name}]
+    version_sums.write_text(''.join(f'{digest(path)}  {path.name}\n' for path in immutable))
     checksums = ''.join(f'{digest(path)}  {path.name}\n' for path in sorted(directory.iterdir()) if path.is_file() and path.name != 'SHA256SUMS')
     (directory / 'SHA256SUMS').write_text(checksums)
     return result
