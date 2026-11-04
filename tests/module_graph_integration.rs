@@ -254,3 +254,40 @@ fn recursive_module_records_report_errors_without_span_underflow() {
         Err(chuchu::type_checker::TypeError::RecursiveRecord { .. })
     ));
 }
+
+#[test]
+fn multiple_aliases_of_one_file_share_record_identity() {
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"a.chuchu\" as a\nimport \"./a.chuchu\" as other\nassign p as a::Point {\nx: 4\n}\nshow other::read(p)",
+        ),
+        (
+            "a.chuchu",
+            "module a\nexport record Point {\nx: int\n}\nexport function read(p: Point) be int {\nreturn p.x\n}",
+        ),
+    ]);
+    let graph = project.load().unwrap();
+    assert_eq!(graph.files.len(), 2);
+    let statements = graph.resolve().unwrap();
+    let mut checker =
+        chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
+    checker.check_program(&statements).unwrap();
+    assert_eq!(checker.record_table().unwrap().len(), 1);
+}
+
+#[test]
+#[cfg(unix)]
+fn symbolic_link_imports_use_the_same_module_identity() {
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"a.chuchu\" as a\nimport \"link.chuchu\" as other",
+        ),
+        ("a.chuchu", "module a"),
+    ]);
+    std::os::unix::fs::symlink(project.0.join("a.chuchu"), project.0.join("link.chuchu")).unwrap();
+    let graph = project.load().unwrap();
+    assert_eq!(graph.files.len(), 2);
+    assert_eq!(graph.files[0].dependencies, [1, 1]);
+}
