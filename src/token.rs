@@ -26,7 +26,6 @@ pub enum TokenKind {
     Module,
     Use,
     Export,
-    ColonColon,
 
     Plus,
     Minus,
@@ -45,7 +44,7 @@ pub enum TokenKind {
     RightBracket,
     Comma,
     Colon,
-    /// Field access separator: `.`.
+    /// Module and record field access separator: `.`.
     Dot,
 
     LeftBrace,

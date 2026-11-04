@@ -122,7 +122,7 @@ fn record_is_reserved_with_identifier_boundaries_and_exact_spans() {
 
 #[test]
 fn module_keywords_and_namespace_separator_preserve_boundaries_and_spans() {
-    let source = "module use export modular useful exported math::add import";
+    let source = "module use export modular useful exported math.add import";
     let tokens = chuchu::lexer::tokenize(source).unwrap();
     use chuchu::token::TokenKind;
     assert_eq!(tokens[0].kind, TokenKind::Module);
@@ -132,6 +132,6 @@ fn module_keywords_and_namespace_separator_preserve_boundaries_and_spans() {
         assert_eq!(tokens[index].kind, TokenKind::Identifier(name.into()));
     }
     assert_eq!(tokens[9].kind, TokenKind::Identifier("import".into()));
-    assert_eq!(tokens[7].kind, TokenKind::ColonColon);
-    assert_eq!(&source[tokens[7].span.start..tokens[7].span.end], "::");
+    assert_eq!(tokens[7].kind, TokenKind::Dot);
+    assert_eq!(&source[tokens[7].span.start..tokens[7].span.end], ".");
 }

@@ -3,11 +3,11 @@ module geometry
 use module math
 
 function move(value: int, distance: int) be int {
-    return math::add(value, distance)
+    return math.add(value, distance)
 }
 
-export function translate(point: math::Point, dx: int, dy: int) be math::Point {
-    return math::Point {
+export function translate(point: math.Point, dx: int, dy: int) be math.Point {
+    return math.Point {
         x: move(point.x, dx)
         y: move(point.y, dy)
     }

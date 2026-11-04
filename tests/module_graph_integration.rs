@@ -102,7 +102,7 @@ fn resolves_private_helpers_and_separate_namespaces() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "use module a\nuse module b\nshow a::value() + b::value()",
+            "use module a\nuse module b\nshow a.value() + b.value()",
         ),
         (
             "a.chuchu",
@@ -131,14 +131,14 @@ fn resolves_private_helpers_and_separate_namespaces() {
 fn rejects_visibility_and_binding_errors() {
     for (main, library, expected) in [
         (
-            "show a::hidden()",
+            "show a.hidden()",
             "function hidden() be int {\nreturn 1\n}",
             "is private",
         ),
-        ("show a::missing()", "", "Unknown function"),
-        ("show b::missing()", "", "Unknown module name"),
+        ("show a.missing()", "", "Unknown function"),
+        ("show b.missing()", "", "Unknown module name"),
         (
-            "show a::Point()",
+            "show a.Point()",
             "export record Point {\nx: int\n}",
             "not a function",
         ),
@@ -162,7 +162,7 @@ fn rejects_visibility_and_binding_errors() {
         ),
         (
             "",
-            "function show_private() be int {\nreturn missing::f()\n}",
+            "function show_private() be int {\nreturn missing.f()\n}",
             "Unknown module name",
         ),
     ] {
@@ -180,12 +180,12 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "use module a\nuse module b\nassign p as a::Point {\nx: 2\n}\nassign box as b::Box {\np: p\n}\nshow b::get(box).x",
+            "use module a\nuse module b\nassign p as a.Point {\nx: 2\n}\nassign box as b.Box {\np: p\n}\nshow b.get(box).x",
         ),
         ("a.chuchu", "module a\nexport record Point {\nx: int\n}"),
         (
             "b.chuchu",
-            "module b\nuse module a\nexport record Box {\np: a::Point\n}\nexport function get(box: Box) be a::Point {\nreturn box.p\n}",
+            "module b\nuse module a\nexport record Box {\np: a.Point\n}\nexport function get(box: Box) be a.Point {\nreturn box.p\n}",
         ),
     ]);
     let graph = project.load().unwrap();
@@ -198,7 +198,7 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "use module a\nuse module b\nassign p as a::Point {\nx: 2\n}\nshow b::get(p)",
+            "use module a\nuse module b\nassign p as a.Point {\nx: 2\n}\nshow b.get(p)",
         ),
         ("a.chuchu", "module same\nexport record Point {\nx: int\n}"),
         (
@@ -239,7 +239,7 @@ fn multiple_module_names_for_one_file_share_record_identity() {
     let project = Project::new(&[
         (
             "main.chuchu",
-            "use module a\nuse module link\nassign p as a::Point {\nx: 4\n}\nshow link::read(p)",
+            "use module a\nuse module link\nassign p as a.Point {\nx: 4\n}\nshow link.read(p)",
         ),
         (
             "a.chuchu",

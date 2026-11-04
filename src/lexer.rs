@@ -250,17 +250,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
             '[' => TokenKind::LeftBracket,
             ']' => TokenKind::RightBracket,
             ',' => TokenKind::Comma,
-            ':' => {
-                if let Some(&(position, ':')) = characters.peek() {
-                    characters.next();
-                    end = position + 1;
-                    TokenKind::ColonColon
-                } else {
-                    TokenKind::Colon
-                }
-            }
+            ':' => TokenKind::Colon,
             // A `.` that follows digits is consumed by the number above, so this is
-            // only reached for field access.
+            // only reached for module or field access.
             '.' => TokenKind::Dot,
             '-' => TokenKind::Minus,
             '=' | '!' | '<' | '>' => {

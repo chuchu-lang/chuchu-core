@@ -91,10 +91,10 @@ impl Parser {
     }
     fn qualified_name(&mut self) -> Result<(String, Span), ParseError> {
         let (mut name, mut span) = self.name()?;
-        if self.at(&TokenKind::ColonColon) {
+        if self.at(&TokenKind::Dot) {
             self.advance();
             let (member, member_span) = self.name()?;
-            name.push_str("::");
+            name.push('.');
             name.push_str(&member);
             span.end = member_span.end;
         }
@@ -680,15 +680,28 @@ impl Parser {
                 kind: ExprKind::Bool(token.kind == TokenKind::True),
                 span: token.span,
             },
-            TokenKind::Identifier(_) => {
-                self.position = saved;
-                let (name, name_span) = self.qualified_name()?;
-                if self.at(&TokenKind::LeftBrace) && !self.in_condition {
-                    self.record_init(name, name_span)?
+            TokenKind::Identifier(name) => {
+                // A dotted initializer is unambiguous: fields cannot be followed
+                // by an initializer block. Ordinary dotted values stay FieldAccess.
+                let qualified_init = self.at(&TokenKind::Dot)
+                    && self
+                        .tokens
+                        .get(self.position + 1)
+                        .is_some_and(|token| matches!(token.kind, TokenKind::Identifier(_)))
+                    && self
+                        .tokens
+                        .get(self.position + 2)
+                        .is_some_and(|token| token.kind == TokenKind::LeftBrace);
+                if qualified_init && !self.in_condition {
+                    self.position = saved;
+                    let (name, span) = self.qualified_name()?;
+                    self.record_init(name, span)?
+                } else if self.at(&TokenKind::LeftBrace) && !self.in_condition {
+                    self.record_init(name, token.span)?
                 } else {
                     Expr {
                         kind: ExprKind::Identifier(name),
-                        span: name_span,
+                        span: token.span,
                     }
                 }
             }
@@ -732,10 +745,21 @@ impl Parser {
         };
         loop {
             if self.at(&TokenKind::LeftParen) {
-                let ExprKind::Identifier(name) = expression.kind else {
-                    return Err(ParseError::ExpectedExpression {
-                        span: expression.span,
-                    });
+                let name = match expression.kind {
+                    ExprKind::Identifier(name) => name,
+                    ExprKind::FieldAccess { object, field } => {
+                        let ExprKind::Identifier(module) = object.kind else {
+                            return Err(ParseError::ExpectedExpression {
+                                span: expression.span,
+                            });
+                        };
+                        format!("{module}.{field}")
+                    }
+                    _ => {
+                        return Err(ParseError::ExpectedExpression {
+                            span: expression.span,
+                        });
+                    }
                 };
                 self.advance();
                 let (arguments, end) = self.arguments(TokenKind::RightParen, "')'")?;

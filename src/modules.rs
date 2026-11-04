@@ -374,7 +374,7 @@ impl Resolver<'_> {
         span: Span,
         public: bool,
     ) -> Result<String, CompileError> {
-        let (owner, member, imported) = if let Some((alias, member)) = name.split_once("::") {
+        let (owner, member, imported) = if let Some((alias, member)) = name.split_once('.') {
             let owner = self.scopes[module].imports.get(alias).ok_or_else(|| {
                 error(
                     format!(
@@ -527,14 +527,6 @@ impl Resolver<'_> {
                 for field in fields {
                     self.expression(&mut field.value, module)?;
                 }
-            }
-            Identifier(name) if name.contains("::") => {
-                return Err(error(
-                    format!(
-                        "Qualified name {name:?} must be used as a function call or record initializer"
-                    ),
-                    expr.span,
-                ));
             }
             Array(items) => {
                 for item in items {
