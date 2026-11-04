@@ -27,13 +27,13 @@ Import a file with an explicit local alias:
 import "./math.chuchu" as math
 
 function origin() be math::Point {
-    return math::Point { x: 0, y: 0 }
+    return math::Point {
+        x: 0
+        y: 0
+    }
 }
 show math::add(2, 3)
 ```
-
-(The existing record grammar requires fields on separate lines; runnable examples
-use that layout.)
 
 ## Rules
 
@@ -67,3 +67,22 @@ use that layout.)
 
 Separate object files, incremental builds, packages, re-exports, exported
 variables, and executable library initialization are outside this first version.
+
+## Diagnostics and compiler APIs
+
+Diagnostics in dependencies show the original file, line, source excerpt, and
+import chain. Circular import errors show the full cycle. Runtime safety errors
+in multi-file programs identify the failing source file and local byte range.
+Debug builds emit a source file entry for each dependency.
+
+`compile_file` and `compile_file_with_options` discover dependencies automatically.
+`compile_named_source_with_options` verifies the entry source against disk and
+uses the same module pipeline. Unnamed `compile_source` APIs accept standalone
+modules but report a diagnostic for imports because no base directory is known.
+
+Existing single-file programs do not need a module declaration or exports.
+New keywords `module`, `import`, and `export` are reserved. There is no implicit
+exporting of existing library declarations.
+
+See [the runnable example](examples/modules/main.chuchu), which prints `5`, `3`,
+and `5` on separate lines and shares its `math` dependency with `geometry`.

@@ -98,6 +98,33 @@ function greet(name: string) be string {
 show greet("دنیا 🌍")
 ```
 
+## Modules and imports
+
+Split programs into `.chuchu` files, export functions and records, and import them
+relative to the file that uses them:
+
+```chuchu
+// math.chuchu
+module math
+
+export function add(a: int, b: int) be int {
+    return a + b
+}
+```
+
+```chuchu
+// main.chuchu
+import "./math.chuchu" as math
+show math::add(2, 3)
+```
+
+Compile the entry file as usual: `cheeku main.chuchu -o program`. Imports use
+`alias::name`; declarations are private unless marked `export`. Imported files
+contain declarations rather than executable top-level statements.
+
+See [module rules and diagnostics](MODULES.md) and the
+[multi-file example](examples/modules/main.chuchu), including imported records.
+
 ## Comments
 
 Use `//` for a line comment or `/* ... */` for a block comment. Block comments
