@@ -1,0 +1,38 @@
+// Records are values: a copy never shares anything with the original.
+record Address {
+    city: string
+    zip: int
+}
+
+record Student {
+    name: string
+    age: int
+    address: Address
+}
+
+function birthday(student: Student) be Student {
+    reassign student.age as student.age + 1
+    return student
+}
+
+assign ali as Student {
+    name: "Ali"
+    age: 22
+    address: Address {
+        city: "Lahore"
+        zip: 54000
+    }
+}
+
+assign copy as ali
+reassign copy.name as "Sara"
+reassign copy.address.city as "Karachi"
+
+show ali.name
+show ali.address.city
+show copy.name
+show copy.address.city
+
+assign older as birthday(ali)
+show older.age
+show ali.age

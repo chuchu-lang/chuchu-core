@@ -3,6 +3,11 @@
 //! Every string expression produces an owned allocation. Bindings and function
 //! arguments take ownership; identifier reads copy, and returns transfer their
 //! expression's allocation after cleaning up locals. No stack pointer escapes.
+//!
+//! A record owns the strings in its fields, including those of records nested in
+//! it, so records follow the same rules: copying a record copies every string it
+//! owns, and releasing one releases them. A record of only numbers and booleans
+//! owns nothing and is an ordinary value.
 use super::*;
 
 impl<'ctx> Generator<'ctx> {
@@ -112,51 +117,127 @@ impl<'ctx> Generator<'ctx> {
         )
     }
 
+    /// Whether a value of this type owns allocations that must be copied with it
+    /// and released after it: strings, results of strings, and records that
+    /// contain either, however deeply nested.
+    pub(super) fn owns(&self, ty: Type) -> bool {
+        match ty {
+            Type::String | Type::Result(ScalarType::String) => true,
+            Type::Record(id) => self
+                .records
+                .get(id)
+                .is_some_and(|layout| layout.fields().iter().any(|field| self.owns(field.ty))),
+            _ => false,
+        }
+    }
+
+    /// An independent copy of a value: every allocation it owns is copied, so
+    /// changing or releasing either one never affects the other.
+    pub(super) fn copy_value(
+        &mut self,
+        value: Value<'ctx>,
+        span: Span,
+    ) -> Result<Value<'ctx>, CodegenError> {
+        match value.ty {
+            Type::String => self.copy_string(value, span),
+            Type::Result(ScalarType::String) => self.copy_result(value, span),
+            Type::Record(id) if self.owns(value.ty) => {
+                let layout = self
+                    .records
+                    .get(id)
+                    .ok_or(invalid("Record type has no layout", span))?
+                    .clone();
+                let BasicValueEnum::StructValue(mut aggregate) = value.raw else {
+                    return Err(invalid("Expected record LLVM value", span));
+                };
+                // Fields that own nothing are already copied by the value itself.
+                let owning: Vec<_> = layout
+                    .fields()
+                    .iter()
+                    .filter(|field| self.owns(field.ty))
+                    .cloned()
+                    .collect();
+                for field in &owning {
+                    let raw = build(
+                        self.builder
+                            .build_extract_value(aggregate, field.index, &field.name),
+                        span,
+                    )?;
+                    let copy = self.copy_value(Value { raw, ty: field.ty }, span)?;
+                    aggregate = build(
+                        self.builder.build_insert_value(
+                            aggregate,
+                            copy.raw,
+                            field.index,
+                            &field.name,
+                        ),
+                        span,
+                    )?
+                    .into_struct_value();
+                }
+                Ok(Value {
+                    raw: aggregate.into(),
+                    ty: value.ty,
+                })
+            }
+            _ => Ok(value),
+        }
+    }
+
+    /// Releases every allocation a value owns. The value must not be used again.
     pub(super) fn release_value(&self, value: Value<'ctx>, span: Span) -> Result<(), CodegenError> {
-        if value.ty == Type::Result(ScalarType::String) {
-            let payload = self.result_payload(value, span)?;
-            self.release_value(payload, span)?;
-        } else if value.ty == Type::String {
-            let pointer = self.string_pointer(value.clone(), span)?;
-            let free = self.external(
-                "free",
-                self.context
-                    .void_type()
-                    .fn_type(&[pointer.get_type().into()], false),
-            )?;
-            build(self.builder.build_call(free, &[pointer.into()], ""), span)?;
-        } else if let Type::Record(ref name) = value.ty {
-            if let Some(rec) = self.records.get(name).cloned() {
-                let pointer = self.spill(&value, span)?;
-                for (idx, (_, fty)) in rec.fields.iter().enumerate() {
-                    if fty.owns_string() {
-                        let field_ptr = build(
-                            self.builder.build_struct_gep(
-                                rec.struct_type,
-                                pointer,
-                                idx as u32,
-                                "rec.clean.field",
-                            ),
-                            span,
-                        )?;
-                        let field_raw = build(
-                            self.builder.build_load(
-                                self.llvm_type(fty, span)?,
-                                field_ptr,
-                                "rec.field.val",
-                            ),
-                            span,
-                        )?;
-                        self.release_value(
-                            Value {
-                                raw: field_raw,
-                                ty: fty.clone(),
-                            },
-                            span,
-                        )?;
-                    }
+        match value.ty {
+            Type::Result(ScalarType::String) => {
+                let payload = self.result_payload(value, span)?;
+                self.release_value(payload, span)?;
+            }
+            Type::String => {
+                let pointer = self.string_pointer(value, span)?;
+                let free = self.external(
+                    "free",
+                    self.context
+                        .void_type()
+                        .fn_type(&[pointer.get_type().into()], false),
+                )?;
+                build(self.builder.build_call(free, &[pointer.into()], ""), span)?;
+            }
+            Type::Record(id) if self.owns(value.ty) => {
+                let layout = self
+                    .records
+                    .get(id)
+                    .ok_or(invalid("Record type has no layout", span))?;
+                let BasicValueEnum::StructValue(aggregate) = value.raw else {
+                    return Err(invalid("Expected record LLVM value", span));
+                };
+                for field in layout.fields().iter().filter(|field| self.owns(field.ty)) {
+                    let raw = build(
+                        self.builder
+                            .build_extract_value(aggregate, field.index, &field.name),
+                        span,
+                    )?;
+                    self.release_value(Value { raw, ty: field.ty }, span)?;
                 }
             }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Releases what the storage at `pointer` owns, leaving the storage itself
+    /// stale: the caller must store a new value or stop using it.
+    pub(super) fn release_at(
+        &self,
+        pointer: PointerValue<'ctx>,
+        ty: Type,
+        span: Span,
+    ) -> Result<(), CodegenError> {
+        if self.owns(ty) {
+            let raw = build(
+                self.builder
+                    .build_load(self.llvm_type(ty, span)?, pointer, "release"),
+                span,
+            )?;
+            self.release_value(Value { raw, ty }, span)?;
         }
         Ok(())
     }
@@ -166,24 +247,7 @@ impl<'ctx> Generator<'ctx> {
         binding: Binding<'ctx>,
         span: Span,
     ) -> Result<(), CodegenError> {
-        if binding.ty.owns_string() {
-            let raw = build(
-                self.builder.build_load(
-                    self.llvm_type(&binding.ty, span)?,
-                    binding.pointer,
-                    "string.cleanup",
-                ),
-                span,
-            )?;
-            self.release_value(
-                Value {
-                    raw,
-                    ty: binding.ty,
-                },
-                span,
-            )?;
-        }
-        Ok(())
+        self.release_at(binding.pointer, binding.ty, span)
     }
 
     pub(super) fn cleanup_strings(&self, all_scopes: bool, span: Span) -> Result<(), CodegenError> {

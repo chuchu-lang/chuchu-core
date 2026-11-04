@@ -21,6 +21,7 @@ pub enum TokenKind {
     Reassign,
     Return,
     Err,
+    /// Record type declaration keyword: `record`.
     /// Record definition keyword: `record`.
     Record,
 
@@ -39,6 +40,11 @@ pub enum TokenKind {
     RightParen,
     LeftBracket,
     RightBracket,
+    Comma,
+    Colon,
+    /// Field access separator: `.`.
+    Dot,
+
     LeftBrace,
     RightBrace,
     Comma,

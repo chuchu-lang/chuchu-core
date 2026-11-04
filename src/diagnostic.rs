@@ -272,6 +272,119 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 "a path through this function has no return value".into(),
                 Some("Add a return statement for every possible path through the function.".into()),
             ),
+            TypeError::UnsupportedRecordUse { feature, span } => (
+                *span,
+                format!("Records do not support {feature} yet"),
+                "this operation on a record cannot be compiled yet".into(),
+                Some("Print the fields of the record instead, such as 'show student.age'.".into()),
+            ),
+            TypeError::DuplicateRecord { name, span } => (
+                *span,
+                format!("Record '{name}' is already declared"),
+                "duplicate record declaration".into(),
+                Some("Rename this record or remove the earlier declaration.".into()),
+            ),
+            TypeError::DuplicateField {
+                record,
+                field,
+                span,
+            } => (
+                *span,
+                format!("Duplicate field '{field}' in record '{record}'"),
+                "this field name is already used in the record".into(),
+                Some("Give each field in a record a different name.".into()),
+            ),
+            TypeError::RecordNotTopLevel { name, span } => (
+                *span,
+                format!("Record '{name}' must be declared at the top level"),
+                "records cannot be declared inside functions or blocks".into(),
+                Some("Move the record declaration outside every function, if, and while block.".into()),
+            ),
+            TypeError::ReservedRecordName { name, span } => (
+                *span,
+                format!("'{name}' is a built-in type name and cannot name a record"),
+                "reserved type name".into(),
+                Some("Choose a different name, for example a capitalized one.".into()),
+            ),
+            TypeError::UndefinedRecordType {
+                record,
+                type_name,
+                span,
+            } => (
+                *span,
+                format!("Unknown type '{type_name}' in record '{record}'"),
+                "no record with this name is declared".into(),
+                Some(format!(
+                    "Declare 'record {type_name}' at the top level, or use int, float, bool, or string."
+                )),
+            ),
+            TypeError::RecursiveRecord { path, span } => (
+                *span,
+                format!("Record '{}' contains itself: {}", path[0], path.join(" -> ")),
+                "this field makes the record infinitely large".into(),
+                Some("Records are stored by value, so a record cannot contain itself, even through other records. Break the cycle.".into()),
+            ),
+            TypeError::UndefinedRecord { name, span } => (
+                *span,
+                format!("Unknown record '{name}'"),
+                "no record with this name is declared".into(),
+                Some(format!("Declare 'record {name}' at the top level before using it.")),
+            ),
+            TypeError::UnknownField { record, field, span } => (
+                *span,
+                format!("Record '{record}' has no field '{field}'"),
+                "this field is not declared in the record".into(),
+                Some(format!("Use one of the fields declared in 'record {record}'.")),
+            ),
+            TypeError::FieldAccessOnNonRecord { field, actual, span } => (
+                *span,
+                format!("Cannot read field '{field}' of a value of type {actual}"),
+                format!("this has type {actual}, not a record"),
+                Some("Only record values have fields; check the name before the '.'.".into()),
+            ),
+            TypeError::FieldAssignOnNonRecord { field, actual, span } => (
+                *span,
+                format!("Cannot assign field '{field}' of a value of type {actual}"),
+                format!("this has type {actual}, not a record"),
+                Some("Only record values have fields; check the name before the '.'.".into()),
+            ),
+            TypeError::DuplicateInitializer { record, field, span } => (
+                *span,
+                format!("Field '{field}' of record '{record}' is set more than once"),
+                "this field was already given a value".into(),
+                Some("Give each field exactly one value.".into()),
+            ),
+            TypeError::MissingFields { record, fields, span } => (
+                *span,
+                format!(
+                    "Record '{record}' is missing {}",
+                    if let [only] = fields.as_slice() {
+                        format!("field '{only}'")
+                    } else {
+                        format!(
+                            "fields {}",
+                            fields.iter().map(|f| format!("'{f}'")).collect::<Vec<_>>().join(", ")
+                        )
+                    }
+                ),
+                "every field must be given a value".into(),
+                Some(format!("Add a line such as '{}: <value>' for each missing field.", fields[0])),
+            ),
+            TypeError::FieldMismatch { detail, span } => (
+                *span,
+                format!(
+                    "Field '{}' of record '{}' expects {}, found {}",
+                    detail.field, detail.record, detail.expected, detail.actual
+                ),
+                format!("this expression has type {}", detail.actual),
+                None,
+            ),
+            TypeError::RecordMismatch { expected, actual, span } => (
+                *span,
+                format!("Type mismatch: expected {expected}, found {actual}"),
+                format!("this expression has type {actual}"),
+                None,
+            ),
             TypeError::UndefinedField { record, field, span } => (
                 *span,
                 format!("Record '{record}' has no field '{field}'"),
@@ -313,6 +426,7 @@ fn parse_diagnostic(error: &ParseError, source: &str) -> Diagnostic {
         | ParseError::ExpectedStatement { span }
         | ParseError::ExpectedIdentifier { span }
         | ParseError::ExpectedStatementSeparator { span }
+        | ParseError::InvalidAssignmentTarget { span }
         | ParseError::ExpectedToken { span, .. } => *span,
         ParseError::UnexpectedEnd => Span {
             start: source.len(),
@@ -374,6 +488,11 @@ fn parse_diagnostic(error: &ParseError, source: &str) -> Diagnostic {
             format!("Expected identifier, found {found}"),
             "expected a variable or parameter name".into(),
             Some("Names must begin with a letter or underscore, for example 'counter'.".into()),
+        ),
+        ParseError::InvalidAssignmentTarget { .. } => (
+            "Invalid assignment target".into(),
+            "only a variable, or a field of a variable, can be reassigned".into(),
+            Some("Assign to a variable or its field, such as 'reassign student.age as 25'.".into()),
         ),
         ParseError::ExpectedStatement { .. } => (
             format!("Expected statement, found {found}"),

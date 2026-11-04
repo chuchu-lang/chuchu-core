@@ -139,6 +139,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                     "be" => TokenKind::Be,
                     "reassign" => TokenKind::Reassign,
                     "return" => TokenKind::Return,
+                    "record" => TokenKind::Record,
                     "err" => TokenKind::Err,
                     "record" => TokenKind::Record,
                     name => TokenKind::Identifier(name.to_owned()),
@@ -248,6 +249,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
             ']' => TokenKind::RightBracket,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
+            // A `.` that follows digits is consumed by the number above, so this is
+            // only reached for field access.
             '.' => TokenKind::Dot,
             '-' => TokenKind::Minus,
             '=' | '!' | '<' | '>' => {

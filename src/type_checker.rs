@@ -1,8 +1,11 @@
-use crate::ast::{BinaryOperator, Expr, ExprKind, Stmt, StmtKind};
+use crate::ast::{
+    BinaryOperator, Expr, ExprKind, FieldInit, FieldTarget, FieldType, RecordField, Stmt, StmtKind,
+};
+use crate::records::{FieldInfo, RecordInfo, RecordTable};
 use crate::symbol_table::{SymbolError, SymbolTable};
 use crate::token::Span;
-use crate::types::{MAX_ARRAY_LEN, NumericType, ScalarType, Type};
-use std::collections::HashMap;
+use crate::types::{MAX_ARRAY_LEN, NumericType, RecordId, ScalarType, Type};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeError {
@@ -47,9 +50,48 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    /// An operation on a record value that cannot be compiled yet.
+    UnsupportedRecordUse {
+        feature: &'static str,
+        span: Span,
+    },
+    DuplicateRecord {
+        name: String,
+        span: Span,
+    },
+    DuplicateField {
+        record: String,
+        field: String,
+        span: Span,
+    },
     UndefinedField {
         record: String,
         field: String,
+        span: Span,
+    },
+    RecordNotTopLevel {
+        name: String,
+        span: Span,
+    },
+    ReservedRecordName {
+        name: String,
+        span: Span,
+    },
+    UndefinedRecordType {
+        record: String,
+        type_name: String,
+        /// The type name written after the field's `:`.
+        span: Span,
+    },
+    RecursiveRecord {
+        /// The records in the cycle, starting and ending with the same name.
+        path: Vec<String>,
+        /// The field that closes the cycle.
+        span: Span,
+    },
+    /// An initializer names a record that is not declared.
+    UndefinedRecord {
+        name: String,
         span: Span,
     },
     MissingField {
@@ -66,6 +108,66 @@ pub enum TypeError {
         message: &'static str,
         span: Span,
     },
+    /// An initializer sets, or an access reads, a field the record does not have.
+    UnknownField {
+        record: String,
+        field: String,
+        /// The field name in the initializer or after the dot.
+        span: Span,
+    },
+    /// A field was read from a value that is not a record.
+    FieldAccessOnNonRecord {
+        field: String,
+        /// The type of the value the field was read from.
+        actual: String,
+        /// The value before the dot.
+        span: Span,
+    },
+    /// A field was assigned on a value that is not a record.
+    FieldAssignOnNonRecord {
+        field: String,
+        /// The type of the value the field was assigned on.
+        actual: String,
+        /// The target before the dot.
+        span: Span,
+    },
+    /// An initializer sets the same field twice.
+    DuplicateInitializer {
+        record: String,
+        field: String,
+        /// The second occurrence of the field name.
+        span: Span,
+    },
+    /// An initializer leaves out fields, listed in declaration order.
+    MissingFields {
+        record: String,
+        fields: Vec<String>,
+        /// The whole initializer.
+        span: Span,
+    },
+    /// A field's value does not have the field's declared type.
+    FieldMismatch {
+        detail: Box<FieldMismatch>,
+        /// The field's value.
+        span: Span,
+    },
+    /// A value of a record type was used where another type was required, or the
+    /// reverse. Types are named because a record's id has no name on its own.
+    RecordMismatch {
+        expected: String,
+        actual: String,
+        span: Span,
+    },
+}
+
+/// The names behind a [`TypeError::FieldMismatch`], boxed there so the error stays
+/// small enough to return by value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldMismatch {
+    pub record: String,
+    pub field: String,
+    pub expected: String,
+    pub actual: String,
 }
 
 #[derive(Debug, Clone)]
@@ -85,9 +187,36 @@ pub struct RecordDefInfo {
 pub struct TypeChecker {
     symbols: SymbolTable,
     functions: HashMap<String, FunctionSignature>,
-    records: HashMap<String, RecordDefInfo>,
+    /// Declared top-level records and their fields, in any source order.
+    records: HashMap<String, Vec<RecordField>>,
+    /// The id of each declared record: its position in `record_names`.
+    record_ids: HashMap<String, RecordId>,
+    /// Record names in declaration order, to name a `Type::Record`.
+    record_names: Vec<String>,
+    /// The declaration span of each record, parallel to `record_names`.
+    record_spans: Vec<Span>,
+    /// Whether the last `check_program` got through record validation.
+    records_validated: bool,
+    /// The first record feature that cannot be compiled yet, reported once the whole
+    /// program has checked, so an actual error elsewhere takes precedence.
+    unsupported_record: Option<TypeError>,
+    /// Whether `check_program` is running, which is when unsupported record
+    /// features may be deferred instead of returned.
+    in_program: bool,
     result: Option<Type>,
     depth: usize,
+}
+
+/// Names of the built-in types, which a record may not take.
+const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "result"];
+
+/// A field's span runs from its name to the end of its type, so the type name is
+/// the last `type_name.len()` bytes.
+fn type_name_span(field: &RecordField, type_name: &str) -> Span {
+    Span {
+        start: field.span.end - type_name.len(),
+        end: field.span.end,
+    }
 }
 
 pub fn reserved_function(name: &str) -> bool {
@@ -174,12 +303,55 @@ impl TypeChecker {
             symbols,
             functions: HashMap::new(),
             records: HashMap::new(),
+            record_ids: HashMap::new(),
+            record_names: Vec::new(),
+            record_spans: Vec::new(),
+            records_validated: false,
+            unsupported_record: None,
+            in_program: false,
             result: None,
             depth: 0,
         }
     }
     /// Checks statements in source order; successful earlier declarations are retained on error.
     pub fn check_program(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
+        self.in_program = true;
+        let result = self.check_whole_program(statements);
+        self.in_program = false;
+        result
+    }
+    /// Reports a record feature that cannot be compiled yet. Inside a program it is
+    /// remembered, first one wins, and returned after every statement has checked.
+    fn defer_unsupported(&mut self, error: TypeError) -> Result<(), TypeError> {
+        if self.in_program {
+            self.unsupported_record.get_or_insert(error);
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+    fn check_whole_program(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
+        let mut declared = HashSet::new();
+        for stmt in statements {
+            if let StmtKind::Function { name, .. } = &stmt.kind
+                && (reserved_function(name)
+                    || self.functions.contains_key(name)
+                    || !declared.insert(name.as_str()))
+            {
+                return Err(TypeError::InvalidFunction {
+                    name: name.clone(),
+                    message: "duplicate or reserved function name",
+                    span: stmt.span,
+                });
+            }
+        }
+        // Record declarations are validated before any statement is checked, so a
+        // malformed declaration is reported first, and so signatures can name them.
+        self.unsupported_record = None;
+        self.records_validated = false;
+        self.validate_records(statements, true)?;
+        self.resolve_record_types(statements)?;
+        self.records_validated = true;
         for stmt in statements {
             if let StmtKind::Record { name, fields } = &stmt.kind {
                 if self.records.contains_key(name) || reserved_function(name) {
@@ -222,9 +394,17 @@ impl TypeChecker {
                 name,
                 parameters,
                 return_type,
+                return_span,
                 ..
             } = &stmt.kind
             {
+                let parameters = parameters
+                    .iter()
+                    .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let result = self.annotation_type(return_type, *return_span)?;
+                self.functions
+                    .insert(name.clone(), FunctionSignature { parameters, result });
                 if reserved_function(name) || self.functions.contains_key(name) {
                     return Err(TypeError::InvalidFunction {
                         name: name.clone(),
@@ -246,7 +426,174 @@ impl TypeChecker {
             }
         }
         for stmt in statements {
+            // A declaration generates no code of its own.
+            if matches!(stmt.kind, StmtKind::Record { .. }) {
+                continue;
+            }
             self.check_statement(stmt)?;
+        }
+        self.unsupported_record.take().map_or(Ok(()), Err)
+    }
+    /// The validated records of the last `check_program`, resolved and in
+    /// declaration order, for code generation. `None` until record validation has
+    /// succeeded, so a half-validated registry is never handed on. A program
+    /// without records gives an empty table.
+    pub fn record_table(&self) -> Option<RecordTable> {
+        if !self.records_validated {
+            return None;
+        }
+        let mut records = Vec::with_capacity(self.record_names.len());
+        for (name, &span) in self.record_names.iter().zip(&self.record_spans) {
+            let fields = self
+                .records
+                .get(name)?
+                .iter()
+                .map(|field| {
+                    Ok(FieldInfo {
+                        name: field.name.clone(),
+                        ty: self.field_type(name, field)?,
+                        span: field.span,
+                    })
+                })
+                .collect::<Result<Vec<_>, TypeError>>()
+                .ok()?;
+            records.push(RecordInfo {
+                name: name.clone(),
+                fields,
+                span,
+            });
+        }
+        Some(RecordTable::new(records))
+    }
+    /// Checks record declarations in source order, including those nested inside
+    /// functions and blocks: each must be top-level, uniquely named, and have
+    /// uniquely named fields.
+    fn validate_records(&mut self, statements: &[Stmt], top_level: bool) -> Result<(), TypeError> {
+        for stmt in statements {
+            match &stmt.kind {
+                StmtKind::Record { name, fields } => {
+                    if !top_level {
+                        return Err(TypeError::RecordNotTopLevel {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    if RESERVED_TYPE_NAMES.contains(&name.as_str()) {
+                        return Err(TypeError::ReservedRecordName {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    if self.records.contains_key(name) {
+                        return Err(TypeError::DuplicateRecord {
+                            name: name.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                    self.record_ids
+                        .insert(name.clone(), RecordId(self.record_names.len()));
+                    self.record_names.push(name.clone());
+                    self.record_spans.push(stmt.span);
+                    self.records.insert(name.clone(), fields.clone());
+                    let mut seen = HashSet::new();
+                    for field in fields {
+                        if !seen.insert(field.name.as_str()) {
+                            return Err(TypeError::DuplicateField {
+                                record: name.clone(),
+                                field: field.name.clone(),
+                                span: field.span,
+                            });
+                        }
+                    }
+                }
+                StmtKind::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    self.validate_records(then_body, false)?;
+                    self.validate_records(else_body, false)?;
+                }
+                StmtKind::While { body, .. } | StmtKind::Function { body, .. } => {
+                    self.validate_records(body, false)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    /// Resolves record-typed fields against every declared record, so records may
+    /// refer to ones declared later, then rejects records that contain themselves,
+    /// directly or through other records, because a value cannot have infinite size.
+    fn resolve_record_types(&self, statements: &[Stmt]) -> Result<(), TypeError> {
+        let declared = || {
+            statements.iter().filter_map(|stmt| match &stmt.kind {
+                StmtKind::Record { name, .. } => Some(name),
+                _ => None,
+            })
+        };
+        for name in declared() {
+            for field in &self.records[name] {
+                if let FieldType::Named(type_name) = &field.ty
+                    && !self.records.contains_key(type_name)
+                {
+                    return Err(TypeError::UndefinedRecordType {
+                        record: name.clone(),
+                        type_name: type_name.clone(),
+                        span: type_name_span(field, type_name),
+                    });
+                }
+            }
+        }
+        // Depth-first search with an explicit stack, so a long chain of records
+        // cannot overflow the compiler's own stack. Every field type resolves.
+        let mut finished: HashSet<&str> = HashSet::new();
+        let mut in_progress: HashSet<&str> = HashSet::new();
+        for start in declared() {
+            if finished.contains(start.as_str()) {
+                continue;
+            }
+            let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
+            in_progress.insert(start.as_str());
+            while let Some(&mut (node, ref mut next)) = stack.last_mut() {
+                let fields = &self.records[node];
+                let Some((index, field, target)) =
+                    fields
+                        .iter()
+                        .enumerate()
+                        .skip(*next)
+                        .find_map(|(i, f)| match &f.ty {
+                            FieldType::Named(target) => Some((i, f, target.as_str())),
+                            FieldType::Builtin(_) => None,
+                        })
+                else {
+                    in_progress.remove(node);
+                    finished.insert(node);
+                    stack.pop();
+                    continue;
+                };
+                *next = index + 1;
+                if finished.contains(target) {
+                    continue;
+                }
+                if in_progress.contains(target) {
+                    let position = stack
+                        .iter()
+                        .position(|(name, _)| *name == target)
+                        .expect("an in-progress record is on the stack");
+                    let mut path: Vec<String> = stack[position..]
+                        .iter()
+                        .map(|(n, _)| (*n).to_owned())
+                        .collect();
+                    path.push(target.to_owned());
+                    return Err(TypeError::RecursiveRecord {
+                        path,
+                        span: type_name_span(field, target),
+                    });
+                }
+                in_progress.insert(target);
+                stack.push((target, 0));
+            }
         }
         Ok(())
     }
@@ -274,14 +621,229 @@ impl TypeChecker {
     }
     fn mismatch(&self, expected: Type, value: &Expr) -> Result<(), TypeError> {
         let actual = self.infer_expression(value)?;
-        if !expected.accepts(&actual) {
-            return Err(TypeError::Mismatch {
-                expected,
-                actual,
-                span: value.span,
-            });
+        if !expected.accepts(actual) {
+            return Err(self.mismatch_error(expected, actual, value.span));
         }
         Ok(())
+    }
+    /// A mismatch error that names record types, which only the checker can do.
+    fn mismatch_error(&self, expected: Type, actual: Type, span: Span) -> TypeError {
+        if matches!(expected, Type::Record(_)) || matches!(actual, Type::Record(_)) {
+            TypeError::RecordMismatch {
+                expected: self.type_label(expected),
+                actual: self.type_label(actual),
+                span,
+            }
+        } else {
+            TypeError::Mismatch {
+                expected,
+                actual,
+                span,
+            }
+        }
+    }
+    fn type_label(&self, ty: Type) -> String {
+        match ty {
+            Type::Int => "int".into(),
+            Type::Float => "float".into(),
+            Type::Bool => "bool".into(),
+            Type::String => "string".into(),
+            Type::Result(payload) => format!("result<{}>", self.type_label(payload.ty())),
+            Type::Array { element, len } => {
+                format!("{}[{len}]", self.type_label(element.scalar()))
+            }
+            Type::Record(id) => self
+                .record_names
+                .get(id.0)
+                .map_or_else(|| "record".into(), Clone::clone),
+        }
+    }
+    /// The type a parameter or return annotation names; a record name resolves to
+    /// that record, which must be declared at the top level.
+    fn annotation_type(&self, ty: &FieldType, span: Span) -> Result<Type, TypeError> {
+        match ty {
+            FieldType::Builtin(ty) => Ok(*ty),
+            FieldType::Named(name) => self
+                .record_ids
+                .get(name)
+                .map(|&id| Type::Record(id))
+                .ok_or_else(|| TypeError::UndefinedRecord {
+                    name: name.clone(),
+                    span,
+                }),
+        }
+    }
+    /// The type of a declared field; a record-typed field resolves to that record.
+    fn field_type(&self, record: &str, field: &RecordField) -> Result<Type, TypeError> {
+        match &field.ty {
+            FieldType::Builtin(ty) => Ok(*ty),
+            FieldType::Named(type_name) => self
+                .record_ids
+                .get(type_name)
+                .map(|&id| Type::Record(id))
+                .ok_or_else(|| TypeError::UndefinedRecordType {
+                    record: record.to_owned(),
+                    type_name: type_name.clone(),
+                    span: type_name_span(field, type_name),
+                }),
+        }
+    }
+    /// Checks `object.field`: the object is a record that declares the field. The
+    /// result is the field's type, so chains such as `a.b.c` resolve one link at a time.
+    fn field_access(&self, object: &Expr, field: &str, span: Span) -> Result<Type, TypeError> {
+        let ty = self.infer_expression(object)?;
+        // The span of an access ends with the field name.
+        let field_span = Span {
+            start: span.end - field.len(),
+            end: span.end,
+        };
+        self.field_of(ty, field, object.span, field_span, false)
+            .map(|(_, field_ty)| field_ty)
+    }
+    /// Looks up `field` on a value of type `ty`, returning the record that declares
+    /// it and the field's type. Reading and writing share this, so they accept
+    /// exactly the same fields; `write` only changes how a non-record is described.
+    fn field_of(
+        &self,
+        ty: Type,
+        field: &str,
+        object_span: Span,
+        field_span: Span,
+        write: bool,
+    ) -> Result<(&str, Type), TypeError> {
+        let declared = match ty {
+            Type::Record(id) => self
+                .record_names
+                .get(id.0)
+                .and_then(|name| Some((name, self.records.get(name)?))),
+            _ => None,
+        };
+        let Some((record, fields)) = declared else {
+            let (field, actual, span) = (field.to_owned(), self.type_label(ty), object_span);
+            return Err(if write {
+                TypeError::FieldAssignOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                }
+            } else {
+                TypeError::FieldAccessOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                }
+            });
+        };
+        let Some(declared_field) = fields.iter().find(|candidate| candidate.name == field) else {
+            return Err(TypeError::UnknownField {
+                record: record.clone(),
+                field: field.to_owned(),
+                span: field_span,
+            });
+        };
+        Ok((record, self.field_type(record, declared_field)?))
+    }
+    /// Checks `reassign variable.field... as value`: the variable exists, each field
+    /// is declared by the record before it, and the value fits the last field.
+    fn assign_field(&self, target: &FieldTarget, value: &Expr) -> Result<(), TypeError> {
+        let mut ty =
+            self.symbols
+                .lookup(&target.variable)
+                .ok_or_else(|| TypeError::UndefinedVariable {
+                    name: target.variable.clone(),
+                    span: target.variable_span,
+                })?;
+        let mut owner = "";
+        let mut object_span = target.variable_span;
+        for field in &target.fields {
+            (owner, ty) = self.field_of(ty, &field.name, object_span, field.span, true)?;
+            object_span = Span {
+                start: target.span.start,
+                end: field.span.end,
+            };
+        }
+        let actual = self.infer_expression(value)?;
+        if ty.accepts(actual) {
+            return Ok(());
+        }
+        Err(match target.fields.last() {
+            Some(last) => TypeError::FieldMismatch {
+                detail: Box::new(FieldMismatch {
+                    record: owner.to_owned(),
+                    field: last.name.clone(),
+                    expected: self.type_label(ty),
+                    actual: self.type_label(actual),
+                }),
+                span: value.span,
+            },
+            None => self.mismatch_error(ty, actual, value.span),
+        })
+    }
+    /// Checks `Name { field: value ... }`: the record exists, every field is set
+    /// exactly once with a value of the declared type, and nothing else is set.
+    fn record_init(
+        &self,
+        name: &str,
+        initializers: &[FieldInit],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let (Some(declared), Some(&id)) = (self.records.get(name), self.record_ids.get(name))
+        else {
+            return Err(TypeError::UndefinedRecord {
+                name: name.to_owned(),
+                span: Span {
+                    start: span.start,
+                    end: span.start + name.len(),
+                },
+            });
+        };
+        let mut seen = HashSet::new();
+        for init in initializers {
+            let name_span = Span {
+                start: init.span.start,
+                end: init.span.start + init.name.len(),
+            };
+            let Some(field) = declared.iter().find(|field| field.name == init.name) else {
+                return Err(TypeError::UnknownField {
+                    record: name.to_owned(),
+                    field: init.name.clone(),
+                    span: name_span,
+                });
+            };
+            if !seen.insert(init.name.as_str()) {
+                return Err(TypeError::DuplicateInitializer {
+                    record: name.to_owned(),
+                    field: init.name.clone(),
+                    span: name_span,
+                });
+            }
+            let actual = self.infer_expression(&init.value)?;
+            let expected = self.field_type(name, field)?;
+            if !expected.accepts(actual) {
+                return Err(TypeError::FieldMismatch {
+                    detail: Box::new(FieldMismatch {
+                        record: name.to_owned(),
+                        field: init.name.clone(),
+                        expected: self.type_label(expected),
+                        actual: self.type_label(actual),
+                    }),
+                    span: init.value.span,
+                });
+            }
+        }
+        let missing: Vec<String> = declared
+            .iter()
+            .filter(|field| !seen.contains(field.name.as_str()))
+            .map(|field| field.name.clone())
+            .collect();
+        if !missing.is_empty() {
+            return Err(TypeError::MissingFields {
+                record: name.to_owned(),
+                fields: missing,
+                span,
+            });
+        }
+        Ok(Type::Record(id))
     }
     pub fn check_statement(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match &stmt.kind {
@@ -340,6 +902,7 @@ impl TypeChecker {
                     })?;
                 self.mismatch(ty, value)
             }
+            StmtKind::AssignField { target, value } => self.assign_field(target, value),
             StmtKind::Show(expr) => {
                 let ty = self.infer_expression(expr)?;
                 if matches!(ty, Type::Result(_)) {
@@ -356,6 +919,10 @@ impl TypeChecker {
                     });
                 }
                 if matches!(ty, Type::Record(_)) {
+                    self.defer_unsupported(TypeError::UnsupportedRecordUse {
+                        feature: "printing a record",
+                        span: expr.span,
+                    })?;
                     return Err(TypeError::InvalidRecord {
                         name: "show".into(),
                         message: "show requires a scalar, access a record field instead",
@@ -392,10 +959,18 @@ impl TypeChecker {
                     .ok_or(TypeError::InvalidReturn { span: stmt.span })?;
                 self.mismatch(ty, expr)
             }
+            StmtKind::Record { name, .. } if self.depth != 0 || self.result.is_some() => {
+                Err(TypeError::RecordNotTopLevel {
+                    name: name.clone(),
+                    span: stmt.span,
+                })
+            }
+            StmtKind::Record { .. } => Ok(()),
             StmtKind::Function {
                 name,
                 parameters,
                 return_type,
+                return_span,
                 body,
             } => {
                 if self.depth != 0 || self.result.is_some() {
@@ -405,10 +980,15 @@ impl TypeChecker {
                         span: stmt.span,
                     });
                 }
+                let return_type = self.annotation_type(return_type, *return_span)?;
+                let parameter_types = parameters
+                    .iter()
+                    .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let previous = std::mem::take(&mut self.symbols);
                 self.result = Some(return_type.clone());
                 let result = (|| {
-                    for parameter in parameters {
+                    for (parameter, ty) in parameters.iter().zip(parameter_types) {
                         self.symbols
                             .declare(parameter.name.clone(), parameter.ty.clone())
                             .map_err(|_| TypeError::DuplicateDeclaration {

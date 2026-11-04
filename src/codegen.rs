@@ -11,6 +11,9 @@ use crate::ast::{BinaryOperator, Expr, ExprKind, Stmt, StmtKind};
 use crate::token::Span;
 
 mod program;
+mod records;
+
+pub use records::{FieldLayout, RecordLayout, RecordLayouts};
 
 #[derive(Debug)]
 pub enum CodegenError {
@@ -269,6 +272,21 @@ pub fn generate_program_with_options<'ctx>(
     options: &crate::optimization::BuildOptions,
 ) -> Result<Module<'ctx>, CodegenError> {
     program::generate_with_options(context, statements, source, options)
+}
+
+/// Lowering for a program the type checker accepted, with the validated record
+/// metadata from [`crate::type_checker::TypeChecker::record_table`]. Record
+/// declarations are not executable statements: each is checked against `records`
+/// and then generates no code. Anything that would create, read, write, or pass a
+/// record is still rejected.
+pub fn generate_program_with_records<'ctx>(
+    context: &'ctx Context,
+    statements: &[Stmt],
+    records: &crate::records::RecordTable,
+    source: Option<&crate::source::SourceFile>,
+    options: &crate::optimization::BuildOptions,
+) -> Result<Module<'ctx>, CodegenError> {
+    program::generate_with_records(context, statements, records, source, options)
 }
 
 /// Generates a verified module containing `main`, which returns an i32 zero.

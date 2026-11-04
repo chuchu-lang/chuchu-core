@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use inkwell::context::Context;
 
-use crate::codegen::{CodegenError, generate_program_with_options};
+use crate::codegen::{CodegenError, generate_program_with_records};
 use crate::lexer::{LexError, tokenize};
 use crate::native::{NativeError, NativeTimings, build_executable_with_options};
 use crate::optimization::BuildOptions;
@@ -68,6 +68,13 @@ impl fmt::Display for CompileError {
                 let (expected, span) = match error {
                     ParseError::UnexpectedEnd => {
                         return write!(f, "Unexpected end of token stream");
+                    }
+                    ParseError::InvalidAssignmentTarget { span } => {
+                        return write!(
+                            f,
+                            "Invalid assignment target at {}..{}",
+                            span.start, span.end
+                        );
                     }
                     ParseError::ExpectedExpression { span } => ("expression", span),
                     ParseError::ExpectedStatement { span } => ("statement", span),
@@ -136,6 +143,56 @@ impl fmt::Display for CompileError {
                     "Function {name:?} must return a value on all paths at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::UnsupportedRecordUse { feature, span } => write!(
+                    f,
+                    "Records do not support {feature} yet at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::DuplicateRecord { name, span } => write!(
+                    f,
+                    "Duplicate record declaration {name:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::DuplicateField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Duplicate field {field:?} in record {record:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::RecordNotTopLevel { name, span } => write!(
+                    f,
+                    "Record {name:?} must be declared at the top level at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::ReservedRecordName { name, span } => write!(
+                    f,
+                    "Record name {name:?} is a built-in type name at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::UndefinedRecordType {
+                    record,
+                    type_name,
+                    span,
+                } => write!(
+                    f,
+                    "Undefined type {type_name:?} in record {record:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::RecursiveRecord { path, span } => write!(
+                    f,
+                    "Recursive record definition {} at {}..{}",
+                    path.join(" -> "),
+                    span.start,
+                    span.end
+                ),
+                TypeError::UndefinedRecord { name, span } => write!(
+                    f,
+                    "Undefined record {name:?} at {}..{}",
+                    span.start, span.end
+                ),
                 TypeError::UndefinedField {
                     record,
                     field,
@@ -145,6 +202,42 @@ impl fmt::Display for CompileError {
                     "Record {record:?} has no field {field:?} at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::UnknownField {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} has no field {field:?} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::FieldAccessOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Cannot read field {field:?} of a value of type {actual} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::FieldAssignOnNonRecord {
+                    field,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Cannot assign field {field:?} of a value of type {actual} at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::DuplicateInitializer {
+                    record,
+                    field,
+                    span,
+                } => write!(
+                    f,
+                    "Field {field:?} of record {record:?} is set more than once at {}..{}",
+                    span.start, span.end
+                ),
                 TypeError::MissingField {
                     record,
                     field,
@@ -152,6 +245,40 @@ impl fmt::Display for CompileError {
                 } => write!(
                     f,
                     "Missing field {field:?} in {record:?} instantiation at {}..{}",
+                    span.start, span.end
+                ),
+                TypeError::MissingFields {
+                    record,
+                    fields,
+                    span,
+                } => write!(
+                    f,
+                    "Record {record:?} is missing {} at {}..{}",
+                    fields
+                        .iter()
+                        .map(|field| format!("{field:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    span.start,
+                    span.end
+                ),
+                TypeError::FieldMismatch { detail, span } => write!(
+                    f,
+                    "Field {:?} of record {:?} expects {}, found {} at {}..{}",
+                    detail.field,
+                    detail.record,
+                    detail.expected,
+                    detail.actual,
+                    span.start,
+                    span.end
+                ),
+                TypeError::RecordMismatch {
+                    expected,
+                    actual,
+                    span,
+                } => write!(
+                    f,
+                    "Type mismatch: expected {expected}, found {actual} at {}..{}",
                     span.start, span.end
                 ),
                 TypeError::NotARecord { ty, span } => write!(
@@ -314,13 +441,15 @@ fn compile_input(
         .map_err(CompileError::Parse)?;
     let parse = start.elapsed();
     let start = Instant::now();
-    TypeChecker::new(SymbolTable::new())
+    let mut checker = TypeChecker::new(SymbolTable::new());
+    checker
         .check_program(&statements)
         .map_err(CompileError::Type)?;
+    let records = checker.record_table().unwrap_or_default();
     let type_check = start.elapsed();
     let start = Instant::now();
     let context = Context::create();
-    let module = generate_program_with_options(&context, &statements, named, options)
+    let module = generate_program_with_records(&context, &statements, &records, named, options)
         .map_err(CompileError::Codegen)?;
     let llvm_generation = start.elapsed();
     let native =

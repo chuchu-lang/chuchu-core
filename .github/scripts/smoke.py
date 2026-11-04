@@ -15,7 +15,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     expected = {'input': 'x = 42\n',
                 'comments': '42\n15\nComment markers inside strings are text: // and /* ... */\n',
-                'main': '35\n', 'assignment': '35\n50\n', 'numerical': '32\n3\n7\n',
+                'main': '35\n', 'records': 'Ali\nLahore\nSara\nKarachi\n23\n22\n', 'assignment': '35\n50\n', 'numerical': '32\n3\n7\n',
                 'syntax_smoke': '25\n100\n4.5\ntrue\n0\n1\n2\n',
                 'strings': 'Hello, دنیا 🌍!\n6\ntrue\nHello, دنیا 🌍! Welcome to Chuchu.\nEscapes: \"quotes\", \\backslash, and\ttab\n',
                 'temperature': 'Celsius to Fahrenheit. Enter a number or quit.\nCelsius:\nTry again: Invalid number\nCelsius:\n50 F\nCelsius:\nDone.\n'}

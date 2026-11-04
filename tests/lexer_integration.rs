@@ -96,3 +96,26 @@ fn be_is_reserved_with_identifier_boundaries_and_exact_spans() {
     assert_eq!(tokenize("->").unwrap()[0].kind, TokenKind::Minus);
     assert_eq!(tokenize("->").unwrap()[1].kind, TokenKind::Greater);
 }
+
+#[test]
+fn record_is_reserved_with_identifier_boundaries_and_exact_spans() {
+    let tokens = tokenize("record").unwrap();
+    assert_eq!(tokens[0].kind, TokenKind::Record);
+    assert_eq!(tokens[0].span, chuchu::token::Span { start: 0, end: 6 });
+
+    let tokens = tokenize("record Student").unwrap();
+    assert_eq!(tokens[0].kind, TokenKind::Record);
+    assert_eq!(tokens[1].kind, TokenKind::Identifier("Student".into()));
+    assert_eq!(tokens[1].span, chuchu::token::Span { start: 7, end: 14 });
+
+    let tokens = tokenize("recording student_record record_ Record records").unwrap();
+    for (token, name) in tokens.iter().zip([
+        "recording",
+        "student_record",
+        "record_",
+        "Record",
+        "records",
+    ]) {
+        assert_eq!(token.kind, TokenKind::Identifier(name.into()));
+    }
+}
