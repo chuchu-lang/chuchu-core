@@ -55,33 +55,30 @@ impl ModuleGraph {
 
     /// Parse unnamed in-memory source without implicit filesystem access.
     pub fn parse_source(source: SourceFile) -> Result<Self, CompileError> {
-        let result = (|| {
-            let start = std::time::Instant::now();
-            let tokens = tokenize(source.text()).map_err(CompileError::Lex)?;
-            let lex_time = start.elapsed();
-            let start = std::time::Instant::now();
-            let syntax = Parser::new(tokens)
-                .parse_module()
-                .map_err(CompileError::Parse)?;
-            let parse_time = start.elapsed();
-            if let Some(import) = syntax.imports.first() {
-                return Err(error(
-                    "Relative imports require a source file; use compile_file or compile_named_source_with_options",
-                    import.span,
-                ));
-            }
-            Ok(Self {
-                files: vec![ModuleFile {
-                    source: source.clone(),
-                    offset: 0,
-                    syntax,
-                    dependencies: Vec::new(),
-                }],
-                lex_time,
-                parse_time,
-            })
-        })();
-        result
+        let start = std::time::Instant::now();
+        let tokens = tokenize(source.text()).map_err(CompileError::Lex)?;
+        let lex_time = start.elapsed();
+        let start = std::time::Instant::now();
+        let syntax = Parser::new(tokens)
+            .parse_module()
+            .map_err(CompileError::Parse)?;
+        let parse_time = start.elapsed();
+        if let Some(import) = syntax.imports.first() {
+            return Err(error(
+                "Relative imports require a source file; use compile_file or compile_named_source_with_options",
+                import.span,
+            ));
+        }
+        Ok(Self {
+            files: vec![ModuleFile {
+                source,
+                offset: 0,
+                syntax,
+                dependencies: Vec::new(),
+            }],
+            lex_time,
+            parse_time,
+        })
     }
 
     pub fn sources(&self) -> SourceFile {
@@ -157,7 +154,12 @@ impl Loader {
         let id = self.files.len();
         self.identities.insert(identity.clone(), id);
         self.files.push(ModuleFile {
-            source: SourceFile::new(identity.clone(), text),
+            source: SourceFile::new(identity.clone(), text).with_import_chain(
+                self.active
+                    .iter()
+                    .map(|&id| self.files[id].source.path().to_owned())
+                    .collect(),
+            ),
             offset,
             syntax: ModuleSyntax::default(),
             dependencies: Vec::new(),

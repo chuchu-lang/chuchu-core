@@ -318,6 +318,7 @@ impl fmt::Display for CompileError {
 impl std::error::Error for CompileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Located { error, .. } => Some(error.as_ref()),
             Self::SourceRead { source, .. } => Some(source),
             Self::Codegen(error) => Some(error),
             Self::Native(error) => Some(error),

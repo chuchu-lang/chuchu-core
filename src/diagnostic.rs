@@ -33,7 +33,16 @@ pub fn render(error: &CompileError, path: &Path, source: &str) -> String {
             start: local,
             end: (local + width).min(file.text().len()),
         };
-        return render_diagnostic(diagnostic, file.path(), file.text());
+        let mut rendered = render_diagnostic(diagnostic, file.path(), file.text());
+        for importer in file.import_chain().iter().rev() {
+            write!(
+                rendered,
+                "\n  = imported from {}",
+                display_text(&importer.display().to_string())
+            )
+            .unwrap();
+        }
+        return rendered;
     }
     let Some(diagnostic) = describe(error, source) else {
         return format!("{}: {error}", path.display());

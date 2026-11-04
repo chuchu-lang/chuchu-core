@@ -15,6 +15,7 @@ pub struct SourceFile {
     line_starts: Vec<usize>,
     /// Disjoint byte ranges preserve file identity without changing public Span literals.
     origins: Vec<(usize, SourceFile)>,
+    import_chain: Vec<PathBuf>,
 }
 
 impl SourceFile {
@@ -26,19 +27,23 @@ impl SourceFile {
             text,
             line_starts,
             origins: Vec::new(),
+            import_chain: Vec::new(),
         }
     }
 
-    /// Build a compilation-wide source address space. Each file has a separator
-    /// byte after it, so even its EOF position belongs unambiguously to that file.
+    /// Build a compilation-wide source address space. A separator byte between
+    /// files ensures even an EOF position belongs unambiguously to its file.
     pub fn bundle(files: Vec<SourceFile>) -> Self {
         let path = files.first().map(|f| f.path.clone()).unwrap_or_default();
         let mut text = String::new();
         let mut origins = Vec::new();
         for file in files {
-            origins.push((text.len(), file.clone()));
+            if !origins.is_empty() {
+                text.push('\n');
+            }
+            let offset = text.len();
             text.push_str(file.text());
-            text.push('\n');
+            origins.push((offset, file));
         }
         let mut bundle = Self::new(path, text);
         bundle.origins = origins;
@@ -61,6 +66,15 @@ impl SourceFile {
         single
             .into_iter()
             .chain(self.origins.iter().map(|(_, file)| file))
+    }
+
+    pub(crate) fn with_import_chain(mut self, paths: Vec<PathBuf>) -> Self {
+        self.import_chain = paths;
+        self
+    }
+
+    pub fn import_chain(&self) -> &[PathBuf] {
+        &self.import_chain
     }
 
     pub fn path(&self) -> &Path {

@@ -129,6 +129,7 @@ fn dependency_type_errors_report_the_original_file_and_preserve_output() {
     let rendered = chuchu::diagnostic::render(&error, &project.0.join("main.chuchu"), "");
     assert!(rendered.contains("a.chuchu:3:8"), "{rendered}");
     assert!(rendered.contains("return missing"), "{rendered}");
+    assert!(rendered.contains("imported from"), "{rendered}");
     assert_eq!(
         std::fs::read_to_string(project.executable()).unwrap(),
         "previous build"
@@ -204,4 +205,52 @@ fn named_source_api_resolves_imports_and_unnamed_api_explains_the_requirement() 
         error.to_string().contains("require a source file"),
         "{error}"
     );
+}
+
+#[test]
+fn imported_record_strings_preserve_value_semantics_across_functions() {
+    let project = Project::new(&[
+        (
+            "main.chuchu",
+            "import \"people.chuchu\" as people\nassign original as people::Person {\nname: \"Ada 🌍\"\n}\nassign changed as people::rename(original)\nshow original.name\nshow changed.name",
+        ),
+        (
+            "people.chuchu",
+            "module people\nexport record Person {\nname: string\n}\nrecord Private {\nname: string\n}\nexport function rename(person: Person) be Person {\nassign helper as Private {\nname: \"Grace\"\n}\nreassign person.name as helper.name\nreturn person\n}",
+        ),
+    ]);
+    project.compile(&BuildOptions::default()).unwrap();
+    let output = Command::new(project.executable()).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, support::native_output("Ada 🌍\nGrace\n"));
+}
+
+#[test]
+fn dependency_parse_errors_point_to_local_eof_with_an_import_trace() {
+    let project = Project::new(&[
+        ("main.chuchu", "import \"a.chuchu\" as a"),
+        ("a.chuchu", "module a\nimport \"b.chuchu\" as b"),
+        (
+            "b.chuchu",
+            "module b\nexport function broken() be int {\nreturn 1",
+        ),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_cheeku"))
+        .arg(project.0.join("main.chuchu"))
+        .arg("-o")
+        .arg(project.executable())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!project.executable().exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("b.chuchu:3:9"), "{stderr}");
+    assert!(stderr.contains("end of file"), "{stderr}");
+    assert!(stderr.contains("imported from"), "{stderr}");
+    assert!(stderr.contains("a.chuchu"), "{stderr}");
+    assert!(stderr.contains("main.chuchu"), "{stderr}");
 }
