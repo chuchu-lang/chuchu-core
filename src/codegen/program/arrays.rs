@@ -24,7 +24,7 @@ impl<'ctx> Generator<'ctx> {
         unsafe {
             build(
                 self.builder.build_gep(
-                    self.llvm_type(&ty, span)?,
+                    self.llvm_type(ty, span)?,
                     pointer,
                     &[self.context.i64_type().const_zero(), index],
                     "element.ptr",

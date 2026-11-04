@@ -1,0 +1,10 @@
+module math
+
+export function add(a: int, b: int) be int {
+    return a + b
+}
+
+export record Point {
+    x: int
+    y: int
+}

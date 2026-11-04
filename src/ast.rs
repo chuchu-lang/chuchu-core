@@ -182,3 +182,21 @@ pub enum StmtKind {
         fields: Vec<RecordField>,
     },
 }
+
+/// File-level syntax; module directives never enter executable statement lowering.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModuleSyntax {
+    pub name: Option<(String, Span)>,
+    pub imports: Vec<Import>,
+    pub exports: Vec<(String, Span)>,
+    pub statements: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    /// Relative source path derived from `use module library.math`.
+    pub path: String,
+    /// The last module component (`math`), used for qualified access.
+    pub alias: String,
+    pub span: Span,
+}

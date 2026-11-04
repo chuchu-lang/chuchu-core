@@ -98,6 +98,58 @@ function greet(name: string) be string {
 show greet("دنیا 🌍")
 ```
 
+## Modules and imports
+
+Split programs into `.chuchu` files, export functions and records, and import them
+relative to the file that uses them:
+
+```chuchu
+// math.chuchu
+module math
+
+export function add(a: int, b: int) be int {
+    return a + b
+}
+```
+
+```chuchu
+// main.chuchu
+use module math
+show math.add(2, 3)
+```
+
+Compile the entry file as usual: `cheeku main.chuchu -o program`. Module access uses
+`math.name`; declarations are private unless marked `export`. Imported files
+contain declarations rather than executable top-level statements.
+
+Each file is one module. Imported files must begin with `module name`; the entry
+file may omit it. `use module math` loads `math.chuchu` from the importing file's
+directory. No quotes, extension, or alias are needed. Use dotted names for nested
+files: `use module geometry.math` loads `geometry/math.chuchu` and makes it
+available as `math.name`. Module uses belong before declarations and executable
+statements. The module declaration supplies a descriptive name.
+
+- Export functions and records with `export function` and `export record`.
+  Qualified record types and initializers also use `math.Point`.
+- Exported signatures and record fields must use public record types.
+  Records from different modules remain distinct types, even with equal fields.
+- Used module names and top-level declarations must have unique names within their
+  module. Missing modules, unknown or private members, duplicate names, and
+  circular imports produce diagnostics with source locations and import context.
+- Each canonical file is loaded once. All reachable files are checked and compiled
+  into one executable through the existing native linker.
+- File-based compiler APIs resolve imports automatically. The named-source API
+  verifies its entry text against disk. Unnamed source APIs cannot resolve imports
+  because they have no base directory.
+
+Existing single-file programs need no module declaration or exports. `module`,
+`use`, and `export` are reserved keywords. Packages, wildcard imports,
+re-exports, exported variables, and executable library initialization are not
+supported.
+
+See the [multi-file example](examples/modules/main.chuchu), including imported
+records and private helpers. It prints `5`, `3`, and `5` on separate lines.
+
 ## Comments
 
 Use `//` for a line comment or `/* ... */` for a block comment. Block comments

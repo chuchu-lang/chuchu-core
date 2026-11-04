@@ -444,9 +444,9 @@ fn rejects_malformed_access() {
     // The dot must stay on the same line as the object and the field.
     assert!(parse("show a\n.b").is_err());
     assert!(parse("show a.\nb").is_err());
-    // Fields are not callable, so a call after a field is not valid syntax.
+    // A module call has one named receiver; nested record fields are not callable.
     assert!(matches!(
-        parse("show a.b(1)"),
+        parse("show a.b.c(1)"),
         Err(ParseError::ExpectedExpression { .. })
     ));
     // A number literal is not a record: `1.x` is the float `1.` and then a name.

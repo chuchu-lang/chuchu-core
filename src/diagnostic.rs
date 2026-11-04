@@ -21,13 +21,40 @@ struct Diagnostic {
 /// Render errors with a location, source excerpt and repair guidance. Errors
 /// without a source location (filesystem, linker, etc.) keep their normal text.
 pub fn render(error: &CompileError, path: &Path, source: &str) -> String {
+    if let CompileError::Located { error, source } = error {
+        let Some(mut diagnostic) = describe(error, source.text()) else {
+            return format!("{}: {error}", source.path().display());
+        };
+        let Some((file, local)) = source.origin(diagnostic.span.start) else {
+            return format!("{}: {error}", source.path().display());
+        };
+        let width = diagnostic.span.end.saturating_sub(diagnostic.span.start);
+        diagnostic.span = Span {
+            start: local,
+            end: (local + width).min(file.text().len()),
+        };
+        let mut rendered = render_diagnostic(diagnostic, file.path(), file.text());
+        for importer in file.import_chain().iter().rev() {
+            write!(
+                rendered,
+                "\n  = imported from {}",
+                display_text(&importer.display().to_string())
+            )
+            .unwrap();
+        }
+        return rendered;
+    }
     let Some(diagnostic) = describe(error, source) else {
         return format!("{}: {error}", path.display());
     };
+    render_diagnostic(diagnostic, path, source)
+}
+
+fn render_diagnostic(diagnostic: Diagnostic, path: &Path, source: &str) -> String {
     let file = SourceFile::new(path.to_owned(), source.to_owned());
     let span = diagnostic.span;
     let Some(position) = file.position(span.start) else {
-        return format!("{}: {error}", path.display());
+        return format!("{}: {}", path.display(), diagnostic.message);
     };
     let start = source[..span.start]
         .rfind('\n')
@@ -127,6 +154,7 @@ fn type_name(ty: &Type) -> String {
 
 fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
     let (span, message, label, help) = match error {
+        CompileError::Module { message, span } => (*span, message.clone(), "module resolution failed".into(), None),
         CompileError::Lex(error) => {
             use crate::lexer::LexErrorKind;
             let (message, label, help) = match error.kind {

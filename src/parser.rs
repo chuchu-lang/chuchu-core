@@ -89,6 +89,108 @@ impl Parser {
         self.advance();
         Ok((name, token.span))
     }
+    fn qualified_name(&mut self) -> Result<(String, Span), ParseError> {
+        let (mut name, mut span) = self.name()?;
+        if self.at(&TokenKind::Dot) {
+            self.advance();
+            let (member, member_span) = self.name()?;
+            name.push('.');
+            name.push_str(&member);
+            span.end = member_span.end;
+        }
+        Ok((name, span))
+    }
+
+    /// Parse a file, keeping module directives separate from executable statements.
+    pub fn parse_module(&mut self) -> Result<crate::ast::ModuleSyntax, ParseError> {
+        let mut module = crate::ast::ModuleSyntax::default();
+        let mut declarations = false;
+        self.newlines()?;
+        if self.at(&TokenKind::Module) {
+            self.advance();
+            module.name = Some(self.name()?);
+            self.module_separator()?;
+        }
+        loop {
+            self.newlines()?;
+            if self.at(&TokenKind::Eof) {
+                return Ok(module);
+            }
+            if self.at(&TokenKind::Module) {
+                return Err(ParseError::ExpectedToken {
+                    expected: "module declaration only at the beginning of a file",
+                    span: self.token()?.span,
+                });
+            }
+            if self.at(&TokenKind::Use) {
+                if declarations {
+                    return Err(ParseError::ExpectedToken {
+                        expected: "module uses before declarations and executable statements",
+                        span: self.token()?.span,
+                    });
+                }
+                let start = self.token()?.span.start;
+                self.advance();
+                self.require(TokenKind::Module, "'module' after 'use'")?;
+                let (mut alias, mut alias_span) = self.name()?;
+                let mut components = vec![alias.clone()];
+                while self.at(&TokenKind::Dot) {
+                    self.advance();
+                    (alias, alias_span) = self.name()?;
+                    components.push(alias.clone());
+                }
+                let path = format!("{}.chuchu", components.join("/"));
+                module.imports.push(crate::ast::Import {
+                    path,
+                    alias,
+                    span: Span {
+                        start,
+                        end: alias_span.end,
+                    },
+                });
+            } else {
+                declarations = true;
+                let export = if self.at(&TokenKind::Export) {
+                    let span = self.token()?.span;
+                    self.advance();
+                    Some(span)
+                } else {
+                    None
+                };
+                if export.is_some()
+                    && !self.at(&TokenKind::Function)
+                    && !self.at(&TokenKind::Record)
+                {
+                    return Err(ParseError::ExpectedToken {
+                        expected: "function or record after 'export'",
+                        span: self.token()?.span,
+                    });
+                }
+                let statement = self.parse_statement()?;
+                if let Some(span) = export {
+                    let name = match &statement.kind {
+                        StmtKind::Function { name, .. } | StmtKind::Record { name, .. } => {
+                            name.clone()
+                        }
+                        _ => unreachable!(),
+                    };
+                    module.exports.push((name, span));
+                }
+                module.statements.push(statement);
+            }
+            self.module_separator()?;
+        }
+    }
+
+    fn module_separator(&mut self) -> Result<(), ParseError> {
+        if !self.at(&TokenKind::Newline) && !self.at(&TokenKind::Eof) {
+            return Err(ParseError::ExpectedStatementSeparator {
+                span: self.token()?.span,
+            });
+        }
+        self.newlines()
+    }
+
     pub fn parse_program(&mut self) -> Result<Vec<Stmt>, ParseError> {
         self.sequence(false)
     }
@@ -162,8 +264,8 @@ impl Parser {
                 "int" | "float" | "bool" | "string" | "result"
             )
         {
-            self.advance();
-            return Ok((FieldType::Named(name.clone()), token.span));
+            let (name, span) = self.qualified_name()?;
+            return Ok((FieldType::Named(name), span));
         }
         let ty = self.annotation()?;
         // The annotation ends where the last token it consumed ends.
@@ -230,7 +332,10 @@ impl Parser {
             TokenKind::Identifier(name) if name == "float" => FieldType::Builtin(Type::Float),
             TokenKind::Identifier(name) if name == "bool" => FieldType::Builtin(Type::Bool),
             TokenKind::Identifier(name) if name == "string" => FieldType::Builtin(Type::String),
-            TokenKind::Identifier(name) if name != "result" => FieldType::Named(name.clone()),
+            TokenKind::Identifier(name) if name != "result" => {
+                let (name, span) = self.qualified_name()?;
+                return Ok((FieldType::Named(name), span));
+            }
             _ => {
                 return Err(ParseError::ExpectedToken {
                     expected: "int, float, bool, string, or a record type name",
@@ -576,7 +681,22 @@ impl Parser {
                 span: token.span,
             },
             TokenKind::Identifier(name) => {
-                if self.at(&TokenKind::LeftBrace) && !self.in_condition {
+                // A dotted initializer is unambiguous: fields cannot be followed
+                // by an initializer block. Ordinary dotted values stay FieldAccess.
+                let qualified_init = self.at(&TokenKind::Dot)
+                    && self
+                        .tokens
+                        .get(self.position + 1)
+                        .is_some_and(|token| matches!(token.kind, TokenKind::Identifier(_)))
+                    && self
+                        .tokens
+                        .get(self.position + 2)
+                        .is_some_and(|token| token.kind == TokenKind::LeftBrace);
+                if qualified_init && !self.in_condition {
+                    self.position = saved;
+                    let (name, span) = self.qualified_name()?;
+                    self.record_init(name, span)?
+                } else if self.at(&TokenKind::LeftBrace) && !self.in_condition {
                     self.record_init(name, token.span)?
                 } else {
                     Expr {
@@ -625,10 +745,21 @@ impl Parser {
         };
         loop {
             if self.at(&TokenKind::LeftParen) {
-                let ExprKind::Identifier(name) = expression.kind else {
-                    return Err(ParseError::ExpectedExpression {
-                        span: expression.span,
-                    });
+                let name = match expression.kind {
+                    ExprKind::Identifier(name) => name,
+                    ExprKind::FieldAccess { object, field } => {
+                        let ExprKind::Identifier(module) = object.kind else {
+                            return Err(ParseError::ExpectedExpression {
+                                span: expression.span,
+                            });
+                        };
+                        format!("{module}.{field}")
+                    }
+                    _ => {
+                        return Err(ParseError::ExpectedExpression {
+                            span: expression.span,
+                        });
+                    }
                 };
                 self.advance();
                 let (arguments, end) = self.arguments(TokenKind::RightParen, "')'")?;

@@ -127,6 +127,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                 }
 
                 match &source[start..end] {
+                    "module" => TokenKind::Module,
+                    "use" => TokenKind::Use,
+                    "export" => TokenKind::Export,
                     "assign" => TokenKind::Set,
                     "as" => TokenKind::As,
                     "show" => TokenKind::Show,
@@ -249,7 +252,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             // A `.` that follows digits is consumed by the number above, so this is
-            // only reached for field access.
+            // only reached for module or field access.
             '.' => TokenKind::Dot,
             '-' => TokenKind::Minus,
             '=' | '!' | '<' | '>' => {

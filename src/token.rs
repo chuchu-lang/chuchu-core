@@ -23,6 +23,9 @@ pub enum TokenKind {
     Err,
     /// Record type declaration keyword: `record`.
     Record,
+    Module,
+    Use,
+    Export,
 
     Plus,
     Minus,
@@ -41,7 +44,7 @@ pub enum TokenKind {
     RightBracket,
     Comma,
     Colon,
-    /// Field access separator: `.`.
+    /// Module and record field access separator: `.`.
     Dot,
 
     LeftBrace,

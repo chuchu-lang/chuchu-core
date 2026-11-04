@@ -205,8 +205,17 @@ const RESERVED_TYPE_NAMES: [&str; 5] = ["int", "float", "bool", "string", "resul
 /// A field's span runs from its name to the end of its type, so the type name is
 /// the last `type_name.len()` bytes.
 fn type_name_span(field: &RecordField, type_name: &str) -> Span {
+    // Resolved module identities are longer than their source spelling. In that
+    // case highlight the field rather than subtracting an internal name length.
+    if type_name.contains('[') {
+        return field.span;
+    }
     Span {
-        start: field.span.end - type_name.len(),
+        start: field
+            .span
+            .end
+            .saturating_sub(type_name.len())
+            .max(field.span.start),
         end: field.span.end,
     }
 }
@@ -843,7 +852,6 @@ impl TypeChecker {
             StmtKind::Return(expr) => {
                 let ty = self
                     .result
-                    .clone()
                     .ok_or(TypeError::InvalidReturn { span: stmt.span })?;
                 self.mismatch(ty, expr)
             }
@@ -874,7 +882,7 @@ impl TypeChecker {
                     .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let previous = std::mem::take(&mut self.symbols);
-                self.result = Some(return_type.clone());
+                self.result = Some(return_type);
                 let result = (|| {
                     for (parameter, ty) in parameters.iter().zip(parameter_types) {
                         self.symbols
@@ -936,7 +944,7 @@ impl TypeChecker {
                     Ok(ty)
                 } else {
                     Err(TypeError::InvalidOperands {
-                        left: ty.clone(),
+                        left: ty,
                         right: ty,
                         span: expr.span,
                     })
@@ -1073,7 +1081,7 @@ impl TypeChecker {
             ("length", [Type::String]) => Ok(Type::Int),
             ("sum", [Type::Array { element, .. }]) => Ok(element.scalar()),
             ("sqrt", [Type::Float]) => Ok(Type::Float),
-            ("abs", [ty]) if ty.is_numeric() => Ok(ty.clone()),
+            ("abs", [ty]) if ty.is_numeric() => Ok(*ty),
             ("min" | "max", [left, right]) if left.is_numeric() && right.is_numeric() => {
                 Ok(if *left == Type::Float || *right == Type::Float {
                     Type::Float
@@ -1100,7 +1108,7 @@ impl TypeChecker {
                 {
                     return Err(invalid());
                 }
-                Ok(signature.result.clone())
+                Ok(signature.result)
             }
         }
     }

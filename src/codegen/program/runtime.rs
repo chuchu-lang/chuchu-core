@@ -40,10 +40,25 @@ impl<'ctx> Generator<'ctx> {
             span,
         )?;
         self.builder.position_at_end(bad);
-        let message = format!(
-            "cheeku runtime: {message} at {}..{}\n",
-            span.start, span.end
-        );
+        let message = if let Some(source) = &self.source
+            && source.files().count() > 1
+            && let Some((file, local)) = source.origin(span.start)
+            && let Some(position) = file.position(local)
+        {
+            format!(
+                "cheeku runtime: {message} at {}:{}:{} ({}..{})\n",
+                file.path().display(),
+                position.line,
+                position.column,
+                local,
+                local + span.end.saturating_sub(span.start)
+            )
+        } else {
+            format!(
+                "cheeku runtime: {message} at {}..{}\n",
+                span.start, span.end
+            )
+        };
         let text = build(
             self.builder
                 .build_global_string_ptr(&message, "runtime.message"),
