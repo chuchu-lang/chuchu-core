@@ -337,7 +337,7 @@ impl ModuleGraph {
                             exported: file.syntax.exports.iter().any(|(export, _)| export == name),
                             // Brackets cannot occur in a source identifier. The file ID
                             // also distinguishes modules that use the same label.
-                            lowered: format!("{label}[{id}]::{name}"),
+                            lowered: format!("{label}[{id}].{name}"),
                         },
                     );
                 }

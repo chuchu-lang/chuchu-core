@@ -209,10 +209,11 @@ fn imported_records_keep_nominal_identity_and_resolve_nested_signatures() {
     let statements = project.load().unwrap().resolve().unwrap();
     let mut checker =
         chuchu::type_checker::TypeChecker::new(chuchu::symbol_table::SymbolTable::new());
-    assert!(matches!(
-        checker.check_program(&statements),
-        Err(chuchu::type_checker::TypeError::InvalidFunction { .. })
-    ));
+    let error = checker.check_program(&statements).unwrap_err();
+    let chuchu::type_checker::TypeError::InvalidFunction { name, .. } = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(name, "same[2].get");
 }
 
 #[test]
