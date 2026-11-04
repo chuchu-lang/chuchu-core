@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int,
     Float,
@@ -6,6 +6,7 @@ pub enum Type {
     String,
     Result(ScalarType),
     Array { element: NumericType, len: usize },
+    Record(String),
 }
 
 /// The first result types carry one scalar. Nested results and array payloads
@@ -27,7 +28,7 @@ impl ScalarType {
             Self::String => Type::String,
         }
     }
-    pub fn from_type(ty: Type) -> Option<Self> {
+    pub fn from_type(ty: &Type) -> Option<Self> {
         match ty {
             Type::Int => Some(Self::Int),
             Type::Float => Some(Self::Float),
@@ -54,14 +55,17 @@ impl NumericType {
 }
 
 impl Type {
-    pub fn owns_string(self) -> bool {
-        matches!(self, Self::String | Self::Result(ScalarType::String))
+    pub fn owns_string(&self) -> bool {
+        matches!(
+            self,
+            Self::String | Self::Result(ScalarType::String) | Self::Record(_)
+        )
     }
-    pub fn is_numeric(self) -> bool {
+    pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Int | Self::Float)
     }
-    pub fn accepts(self, source: Self) -> bool {
-        self == source || (self == Self::Float && source == Self::Int)
+    pub fn accepts(&self, source: &Self) -> bool {
+        self == source || (*self == Self::Float && *source == Self::Int)
     }
 }
 

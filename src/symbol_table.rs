@@ -35,8 +35,8 @@ impl SymbolTable {
         self.scopes
             .iter()
             .rev()
-            .find_map(|scope| scope.get(name).copied())
-            .or_else(|| self.symbols.get(name).copied())
+            .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| self.symbols.get(name).cloned())
     }
 
     pub fn enter_scope(&mut self) {

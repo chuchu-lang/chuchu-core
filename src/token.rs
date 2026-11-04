@@ -21,6 +21,8 @@ pub enum TokenKind {
     Reassign,
     Return,
     Err,
+    /// Record definition keyword: `record`.
+    Record,
 
     Plus,
     Minus,
@@ -37,11 +39,12 @@ pub enum TokenKind {
     RightParen,
     LeftBracket,
     RightBracket,
-    Comma,
-    Colon,
-
     LeftBrace,
     RightBrace,
+    Comma,
+    Colon,
+    /// Member-access operator: `.`.
+    Dot,
 
     Newline,
     Eof,

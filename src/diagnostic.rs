@@ -113,14 +113,15 @@ fn display_text(text: &str) -> String {
     output
 }
 
-fn type_name(ty: Type) -> String {
+fn type_name(ty: &Type) -> String {
     match ty {
         Type::Int => "int".into(),
         Type::Float => "float".into(),
         Type::Bool => "bool".into(),
         Type::String => "string".into(),
-        Type::Result(payload) => format!("result<{}>", type_name(payload.ty())),
-        Type::Array { element, len } => format!("{}[{len}]", type_name(element.scalar())),
+        Type::Result(payload) => format!("result<{}>", type_name(&payload.ty())),
+        Type::Array { element, len } => format!("{}[{len}]", type_name(&element.scalar())),
+        Type::Record(name) => name.clone(),
     }
 }
 
@@ -194,8 +195,8 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 *span,
                 format!(
                     "Unsupported operand types {} and {}",
-                    type_name(*left),
-                    type_name(*right)
+                    type_name(left),
+                    type_name(right)
                 ),
                 "these values cannot be combined with this operator".into(),
                 None,
@@ -208,10 +209,10 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 *span,
                 format!(
                     "Type mismatch: expected {}, found {}",
-                    type_name(*expected),
-                    type_name(*actual)
+                    type_name(expected),
+                    type_name(actual)
                 ),
-                format!("this expression has type {}", type_name(*actual)),
+                format!("this expression has type {}", type_name(actual)),
                 None,
             ),
             TypeError::InvalidCondition { span } => (
@@ -270,6 +271,30 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 format!("Function '{name}' must return a value on all paths"),
                 "a path through this function has no return value".into(),
                 Some("Add a return statement for every possible path through the function.".into()),
+            ),
+            TypeError::UndefinedField { record, field, span } => (
+                *span,
+                format!("Record '{record}' has no field '{field}'"),
+                "field not found in record definition".into(),
+                Some(format!("Check the definition of 'record {record}' for available fields.")),
+            ),
+            TypeError::MissingField { record, field, span } => (
+                *span,
+                format!("Missing required field '{field}' in '{record}' instantiation"),
+                format!("field '{field}' must be specified"),
+                Some(format!("Provide '{field}: <value>' in the record instantiation.")),
+            ),
+            TypeError::NotARecord { ty, span } => (
+                *span,
+                format!("Type '{}' is not a record", type_name(ty)),
+                "field access requires a record value".into(),
+                None,
+            ),
+            TypeError::InvalidRecord { name, message, span } => (
+                *span,
+                format!("Invalid record '{name}': {message}"),
+                message.to_string(),
+                None,
             ),
         },
         _ => return None,
