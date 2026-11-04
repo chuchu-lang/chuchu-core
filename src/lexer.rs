@@ -141,6 +141,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                     "return" => TokenKind::Return,
                     "record" => TokenKind::Record,
                     "err" => TokenKind::Err,
+                    "record" => TokenKind::Record,
                     name => TokenKind::Identifier(name.to_owned()),
                 }
             }
@@ -389,6 +390,29 @@ mod tests {
                 TokenKind::Identifier("total_1".to_owned()),
                 TokenKind::As,
                 TokenKind::Show,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_record_and_field_access() {
+        let tokens = tokenize("record Point { x: int }\np.x").expect("Lexer should succeed");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Record,
+                TokenKind::Identifier("Point".to_owned()),
+                TokenKind::LeftBrace,
+                TokenKind::Identifier("x".to_owned()),
+                TokenKind::Colon,
+                TokenKind::Identifier("int".to_owned()),
+                TokenKind::RightBrace,
+                TokenKind::Newline,
+                TokenKind::Identifier("p".to_owned()),
+                TokenKind::Dot,
+                TokenKind::Identifier("x".to_owned()),
                 TokenKind::Eof,
             ]
         );

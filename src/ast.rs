@@ -28,16 +28,13 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
     Identifier(String),
-    /// Reads a record field, written `object.field`. The span ends with the field
-    /// name, which is therefore the last `field.len()` bytes of it.
     FieldAccess {
-        object: Box<Expr>,
+        target: Box<Expr>,
         field: String,
     },
-    /// A record value written as `Name { field: expression ... }`.
     RecordInit {
         name: String,
-        fields: Vec<FieldInit>,
+        fields: Vec<(String, Expr)>,
     },
     Binary {
         left: Box<Expr>,
@@ -140,6 +137,13 @@ pub struct FieldTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldDef {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
@@ -157,10 +161,14 @@ pub enum StmtKind {
         name: String,
         value: Expr,
     },
-    /// Replaces a record field using `reassign variable.field as value`.
     AssignField {
-        target: FieldTarget,
+        target: Box<Expr>,
+        field: String,
         value: Expr,
+    },
+    Record {
+        name: String,
+        fields: Vec<RecordFieldDef>,
     },
     If {
         condition: Expr,

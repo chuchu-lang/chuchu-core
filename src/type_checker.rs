@@ -60,6 +60,7 @@ pub enum TypeError {
         span: Span,
     },
     DuplicateField {
+    UndefinedField {
         record: String,
         field: String,
         span: Span,
@@ -149,12 +150,34 @@ pub struct FieldMismatch {
     pub field: String,
     pub expected: String,
     pub actual: String,
+    MissingField {
+        record: String,
+        field: String,
+        span: Span,
+    },
+    NotARecord {
+        ty: Type,
+        span: Span,
+    },
+    InvalidRecord {
+        name: String,
+        message: &'static str,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub parameters: Vec<Type>,
     pub result: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordDefInfo {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub field_indices: HashMap<String, usize>,
+    pub span: Span,
 }
 
 pub struct TypeChecker {
@@ -326,6 +349,43 @@ impl TypeChecker {
         self.resolve_record_types(statements)?;
         self.records_validated = true;
         for stmt in statements {
+            if let StmtKind::Record { name, fields } = &stmt.kind {
+                if self.records.contains_key(name) || reserved_function(name) {
+                    return Err(TypeError::InvalidRecord {
+                        name: name.clone(),
+                        message: "duplicate record name",
+                        span: stmt.span,
+                    });
+                }
+                let mut field_indices = HashMap::new();
+                let mut field_list = Vec::new();
+                for (index, field) in fields.iter().enumerate() {
+                    if field_indices.insert(field.name.clone(), index).is_some() {
+                        return Err(TypeError::InvalidRecord {
+                            name: name.clone(),
+                            message: "duplicate field name in record",
+                            span: field.span,
+                        });
+                    }
+                    field_list.push((field.name.clone(), field.ty.clone()));
+                }
+                self.records.insert(
+                    name.clone(),
+                    RecordDefInfo {
+                        name: name.clone(),
+                        fields: field_list,
+                        field_indices,
+                        span: stmt.span,
+                    },
+                );
+            }
+        }
+        for record in self.records.values() {
+            for (_fname, fty) in &record.fields {
+                self.validate_type(fty, record.span)?;
+            }
+        }
+        for stmt in statements {
             if let StmtKind::Function {
                 name,
                 parameters,
@@ -341,6 +401,24 @@ impl TypeChecker {
                 let result = self.annotation_type(return_type, *return_span)?;
                 self.functions
                     .insert(name.clone(), FunctionSignature { parameters, result });
+                if reserved_function(name) || self.functions.contains_key(name) {
+                    return Err(TypeError::InvalidFunction {
+                        name: name.clone(),
+                        message: "duplicate or reserved function name",
+                        span: stmt.span,
+                    });
+                }
+                for param in parameters {
+                    self.validate_type(&param.ty, param.span)?;
+                }
+                self.validate_type(return_type, stmt.span)?;
+                self.functions.insert(
+                    name.clone(),
+                    FunctionSignature {
+                        parameters: parameters.iter().map(|p| p.ty.clone()).collect(),
+                        result: return_type.clone(),
+                    },
+                );
             }
         }
         for stmt in statements {
@@ -515,6 +593,18 @@ impl TypeChecker {
         }
         Ok(())
     }
+    fn validate_type(&self, ty: &Type, span: Span) -> Result<(), TypeError> {
+        if let Type::Record(name) = ty {
+            if !self.records.contains_key(name) {
+                return Err(TypeError::InvalidRecord {
+                    name: name.clone(),
+                    message: "undefined record type",
+                    span,
+                });
+            }
+        }
+        Ok(())
+    }
     fn block(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
         self.symbols.enter_scope();
         self.depth += 1;
@@ -542,6 +632,8 @@ impl TypeChecker {
             }
         } else {
             TypeError::Mismatch {
+        if !expected.accepts(&actual) {
+            return Err(TypeError::Mismatch {
                 expected,
                 actual,
                 span,
@@ -753,6 +845,38 @@ impl TypeChecker {
     }
     pub fn check_statement(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match &stmt.kind {
+            StmtKind::Record { .. } => Ok(()),
+            StmtKind::AssignField {
+                target,
+                field,
+                value,
+            } => {
+                let target_ty = self.infer_expression(target)?;
+                match target_ty {
+                    Type::Record(rec_name) => {
+                        let record_info = self.records.get(&rec_name).ok_or_else(|| {
+                            TypeError::InvalidRecord {
+                                name: rec_name.clone(),
+                                message: "unknown record type",
+                                span: target.span,
+                            }
+                        })?;
+                        let idx = record_info.field_indices.get(field).ok_or_else(|| {
+                            TypeError::UndefinedField {
+                                record: rec_name.clone(),
+                                field: field.clone(),
+                                span: stmt.span,
+                            }
+                        })?;
+                        let expected_ty = record_info.fields[*idx].1.clone();
+                        self.mismatch(expected_ty, value)
+                    }
+                    other => Err(TypeError::NotARecord {
+                        ty: other,
+                        span: target.span,
+                    }),
+                }
+            }
             StmtKind::Set { name, value } => {
                 let ty = self.infer_expression(value)?;
                 self.symbols
@@ -797,6 +921,11 @@ impl TypeChecker {
                         feature: "printing a record",
                         span: expr.span,
                     })?;
+                    return Err(TypeError::InvalidRecord {
+                        name: "show".into(),
+                        message: "show requires a scalar, access a record field instead",
+                        span: expr.span,
+                    });
                 }
                 Ok(())
             }
@@ -824,6 +953,7 @@ impl TypeChecker {
             StmtKind::Return(expr) => {
                 let ty = self
                     .result
+                    .clone()
                     .ok_or(TypeError::InvalidReturn { span: stmt.span })?;
                 self.mismatch(ty, expr)
             }
@@ -854,11 +984,11 @@ impl TypeChecker {
                     .map(|parameter| self.annotation_type(&parameter.ty, parameter.ty_span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let previous = std::mem::take(&mut self.symbols);
-                self.result = Some(return_type);
+                self.result = Some(return_type.clone());
                 let result = (|| {
                     for (parameter, ty) in parameters.iter().zip(parameter_types) {
                         self.symbols
-                            .declare(parameter.name.clone(), ty)
+                            .declare(parameter.name.clone(), parameter.ty.clone())
                             .map_err(|_| TypeError::DuplicateDeclaration {
                                 name: parameter.name.clone(),
                                 span: parameter.span,
@@ -883,8 +1013,86 @@ impl TypeChecker {
     }
     pub fn infer_expression(&self, expr: &Expr) -> Result<Type, TypeError> {
         match &expr.kind {
-            ExprKind::RecordInit { name, fields } => self.record_init(name, fields, expr.span),
-            ExprKind::FieldAccess { object, field } => self.field_access(object, field, expr.span),
+            ExprKind::RecordInit { name, fields } => {
+                let record_info = self
+                    .records
+                    .get(name)
+                    .ok_or_else(|| TypeError::InvalidRecord {
+                        name: name.clone(),
+                        message: "unknown record type in instantiation",
+                        span: expr.span,
+                    })?
+                    .clone();
+
+                let mut provided = HashMap::new();
+                for (field_name, field_expr) in fields {
+                    let field_ty = self.infer_expression(field_expr)?;
+                    if provided
+                        .insert(field_name.clone(), (field_ty, field_expr.span))
+                        .is_some()
+                    {
+                        return Err(TypeError::InvalidRecord {
+                            name: name.clone(),
+                            message: "duplicate field in record instantiation",
+                            span: field_expr.span,
+                        });
+                    }
+                }
+
+                for (expected_name, expected_ty) in &record_info.fields {
+                    let (actual_ty, span) =
+                        provided
+                            .remove(expected_name)
+                            .ok_or_else(|| TypeError::MissingField {
+                                record: name.clone(),
+                                field: expected_name.clone(),
+                                span: expr.span,
+                            })?;
+                    if !expected_ty.accepts(&actual_ty) {
+                        return Err(TypeError::Mismatch {
+                            expected: expected_ty.clone(),
+                            actual: actual_ty,
+                            span,
+                        });
+                    }
+                }
+
+                if let Some((extra, (_, span))) = provided.into_iter().next() {
+                    return Err(TypeError::UndefinedField {
+                        record: name.clone(),
+                        field: extra,
+                        span,
+                    });
+                }
+
+                Ok(Type::Record(name.clone()))
+            }
+            ExprKind::FieldAccess { target, field } => {
+                let target_ty = self.infer_expression(target)?;
+                match target_ty {
+                    Type::Record(rec_name) => {
+                        let record_info = self.records.get(&rec_name).ok_or_else(|| {
+                            TypeError::InvalidRecord {
+                                name: rec_name.clone(),
+                                message: "unknown record type",
+                                span: expr.span,
+                            }
+                        })?;
+                        let idx = record_info.field_indices.get(field).ok_or_else(|| {
+                            TypeError::UndefinedField {
+                                record: rec_name.clone(),
+                                field: field.clone(),
+                                span: expr.span,
+                            }
+                        })?;
+                        Ok(record_info.fields[*idx].1.clone())
+                    }
+                    other => Err(TypeError::NotARecord {
+                        ty: other,
+                        span: target.span,
+                    }),
+                }
+            }
             ExprKind::Integer(_) => Ok(Type::Int),
             ExprKind::Float(literal) => {
                 if literal.parse::<f64>().is_ok_and(f64::is_finite) {
@@ -916,7 +1124,7 @@ impl TypeChecker {
                     Ok(ty)
                 } else {
                     Err(TypeError::InvalidOperands {
-                        left: ty,
+                        left: ty.clone(),
                         right: ty,
                         span: expr.span,
                     })
@@ -952,7 +1160,7 @@ impl TypeChecker {
                 {
                     return Ok(Type::Bool);
                 }
-                if let (Type::Array { .. }, Type::Array { .. }) = (left, right)
+                if let (Type::Array { .. }, Type::Array { .. }) = (&left, &right)
                     && left == right
                     && matches!(operator, BinaryOperator::Add | BinaryOperator::Multiply)
                 {
@@ -1036,9 +1244,9 @@ impl TypeChecker {
             ("try_input", [] | [Type::String]) => Ok(Type::Result(ScalarType::String)),
             ("parse_int", [Type::String]) => Ok(Type::Result(ScalarType::Int)),
             ("parse_float", [Type::String]) => Ok(Type::Result(ScalarType::Float)),
-            ("to_string", [ty]) if ScalarType::from_type(*ty).is_some() => Ok(Type::String),
-            ("ok", [ty]) if ScalarType::from_type(*ty).is_some() => Ok(Type::Result(
-                ScalarType::from_type(*ty).expect("checked scalar"),
+            ("to_string", [ty]) if ScalarType::from_type(ty).is_some() => Ok(Type::String),
+            ("ok", [ty]) if ScalarType::from_type(ty).is_some() => Ok(Type::Result(
+                ScalarType::from_type(ty).expect("checked scalar"),
             )),
             ("is_ok" | "is_eof", [Type::Result(_)]) => Ok(Type::Bool),
             ("error_code", [Type::Result(_)]) => Ok(Type::Int),
@@ -1053,7 +1261,7 @@ impl TypeChecker {
             ("length", [Type::String]) => Ok(Type::Int),
             ("sum", [Type::Array { element, .. }]) => Ok(element.scalar()),
             ("sqrt", [Type::Float]) => Ok(Type::Float),
-            ("abs", [ty]) if ty.is_numeric() => Ok(*ty),
+            ("abs", [ty]) if ty.is_numeric() => Ok(ty.clone()),
             ("min" | "max", [left, right]) if left.is_numeric() && right.is_numeric() => {
                 Ok(if *left == Type::Float || *right == Type::Float {
                     Type::Float
@@ -1076,11 +1284,11 @@ impl TypeChecker {
                         .parameters
                         .iter()
                         .zip(&types)
-                        .all(|(expected, actual)| expected.accepts(*actual))
+                        .all(|(expected, actual)| expected.accepts(actual))
                 {
                     return Err(invalid());
                 }
-                Ok(signature.result)
+                Ok(signature.result.clone())
             }
         }
     }
@@ -1456,5 +1664,32 @@ mod tests {
                 })
             );
         }
+    }
+    #[test]
+    fn checks_record_typing_and_errors() {
+        let mut checker = TypeChecker::new(SymbolTable::new());
+        let program = parse_program(
+            "record Point { x: int, y: int }\nassign p as Point { x: 10, y: 20 }\nreassign p.x as 30",
+        );
+        assert_eq!(checker.check_program(&program), Ok(()));
+
+        // Missing field
+        let mut checker2 = TypeChecker::new(SymbolTable::new());
+        let bad_init =
+            parse_program("record Point { x: int, y: int }\nassign p as Point { x: 10 }");
+        assert!(matches!(
+            checker2.check_program(&bad_init),
+            Err(TypeError::MissingField { .. })
+        ));
+
+        // Unknown field access
+        let mut checker3 = TypeChecker::new(SymbolTable::new());
+        let bad_access = parse_program(
+            "record Point { x: int, y: int }\nassign p as Point { x: 10, y: 20 }\nshow p.z",
+        );
+        assert!(matches!(
+            checker3.check_program(&bad_access),
+            Err(TypeError::UndefinedField { .. })
+        ));
     }
 }
