@@ -234,7 +234,7 @@ impl<'ctx> Generator<'ctx> {
         if self.owns(ty) {
             let raw = build(
                 self.builder
-                    .build_load(self.llvm_type(ty, span)?, pointer, "release"),
+                    .build_load(self.llvm_type(&ty, span)?, pointer, "release"),
                 span,
             )?;
             self.release_value(Value { raw, ty }, span)?;

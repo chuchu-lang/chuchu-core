@@ -121,7 +121,7 @@ fn type_name(ty: &Type) -> String {
         Type::String => "string".into(),
         Type::Result(payload) => format!("result<{}>", type_name(&payload.ty())),
         Type::Array { element, len } => format!("{}[{len}]", type_name(&element.scalar())),
-        Type::Record(name) => name.clone(),
+        Type::Record(_) => "record".into(),
     }
 }
 

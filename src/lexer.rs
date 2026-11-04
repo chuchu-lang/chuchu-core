@@ -141,7 +141,6 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                     "return" => TokenKind::Return,
                     "record" => TokenKind::Record,
                     "err" => TokenKind::Err,
-                    "record" => TokenKind::Record,
                     name => TokenKind::Identifier(name.to_owned()),
                 }
             }

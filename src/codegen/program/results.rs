@@ -296,7 +296,7 @@ impl<'ctx> Generator<'ctx> {
                 }
                 // Report the specific reason before the catch-all, so a failure
                 // explains itself. Codes are the shared runtime codes.
-                let code = self.result_code(result, span)?;
+                let code = self.result_code(result.clone(), span)?;
                 self.guard_status_is_not(
                     code,
                     ErrorCode::InvalidUtf8,
@@ -339,7 +339,7 @@ impl<'ctx> Generator<'ctx> {
                 if name == "try_write_file" {
                     return Ok(result);
                 }
-                let code = self.result_code(result, span)?;
+                let code = self.result_code(result.clone(), span)?;
                 self.guard_status_is_ok(
                     code,
                     "write_file failed: the file could not be created, written or closed; use try_write_file() to handle errors",
