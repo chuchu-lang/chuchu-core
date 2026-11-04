@@ -134,6 +134,7 @@ pub fn emit_object_with_options(
     output: &Path,
     options: &BuildOptions,
 ) -> Result<NativeTimings, NativeError> {
+    #[cfg(not(target_os = "windows"))]
     module
         .verify()
         .map_err(|error| NativeError::Verification(error.to_string()))?;
@@ -155,6 +156,7 @@ pub fn emit_object_with_options(
         fs::write(path, assembly.as_slice()).map_err(|error| filesystem_error(path, error))?;
     }
     let start = Instant::now();
+    #[cfg(not(target_os = "windows"))]
     module
         .verify()
         .map_err(|error| NativeError::Verification(error.to_string()))?;
