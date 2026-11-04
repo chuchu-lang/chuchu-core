@@ -4,3 +4,7 @@
 /benchmarks/__pycache__/
 
 /.github/scripts/__pycache__/
+
+/installer/manager/target/
+/installer/__pycache__/
+/installer/tests/__pycache__/

@@ -1,0 +1,2 @@
+# Deployment-only SDK; ordinary installer unit tests use no AWS dependencies.
+boto3==1.43.124

@@ -215,6 +215,15 @@ division and bounds failures go to stderr with source spans and exit 1. The same
 portable integration suites exercise all OSes; see their actual validation status
 before claiming compatibility.
 
+## Installers and updates
+
+Self-hosted installer packaging and `cheeku update` are being implemented for
+Windows x64, macOS ARM64/Intel, and Linux x64 GNU. See the
+[installer guide](installer/README.md) for package generation, the S3 + CloudFront
+download layout at `https://downloads.chuchu-lang.org`, update verification, and
+remaining release validation. These installers
+are development artifacts until native and clean-machine checks pass.
+
 ## CI and distribution
 
 `.github/workflows/cross-platform.yml` builds/tests macOS ARM64, macOS Intel,
@@ -222,8 +231,11 @@ Linux x64 GNU, and Windows x64 MSVC. SDK downloads are pinned and SHA-256 checke
 Both macOS targets and Windows build LLVM from the same verified source release
 (the official ARM64 macOS SDK ships only bitcode archives that Apple's linker
 rejects); built SDKs are cached per platform. Every job runs native programs and
-packages only after its tests pass. The tag-triggered release workflow
-requires all four jobs and creates a draft, not an unreviewed public release.
+packages only after its tests pass. The release workflow runs for version tags
+or manual dispatches, requires all four jobs, and stages a draft. After production
+approval, it deploys verified installers to S3 through OIDC, publishes `latest.json`
+last, verifies CloudFront, and finalizes the GitHub Release. Ordinary merges run
+quick checks. See the [deployment guide](docs/aws-installer-releases.md) for setup.
 
 Archives require external toolchains/runtimes; see
 [release requirements](docs/release-runtime.md). [Contributing](CONTRIBUTING.md)
@@ -260,3 +272,9 @@ See [optimization/API details](docs/optimization.md),
 [measurement methodology](docs/performance.md), the
 [benchmark runner](benchmarks/README.md), and the
 [benchmark results and limitations](docs/benchmark-results.md).
+
+The official website automatically discovers native installers through the
+separate `downloads.json` manifest. See the
+[installer guide](installer/README.md#website-downloads) for its schema and the
+[AWS deployment guide](docs/aws-installer-releases.md#website-integration-and-consistency)
+for publication consistency, CloudFront settings and first-release verification.

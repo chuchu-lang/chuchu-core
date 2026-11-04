@@ -1,5 +1,12 @@
 # Cheeku native distribution requirements
 
+New self-hosted installer payloads are documented in
+[installers and updates](../installer/README.md). They bundle relocatable compiler
+libraries and use a stable launcher for explicit updates. The legacy archive
+script below still produces dependency-requiring developer archives. Public
+installer signing and clean-machine validation are separate release gates.
+
+
 These archives are **not standalone SDKs**. Each contains one native compiler,
 the Chuchu MIT license, and examples. LLVM, Clang, and Microsoft redistributables
 are not bundled; their redistribution licenses therefore do not become package
@@ -23,9 +30,11 @@ for native program linking even when Cheeku itself starts successfully.
 
 Build outputs are packaged only after the matching native tests and release
 smoke tests succeed. Tag workflow `release.yml` creates a **draft** only when all
-four target jobs succeed; review platform evidence before publishing that draft.
-No release is published merely by adding workflow files. Check that the tagged
-revision's four target jobs passed before publishing a draft.
+four target jobs succeed. Review platform evidence before approving deployment
+in the protected `production` environment. The deployment job uploads verified
+installers to S3, publishes the update manifest last, verifies CloudFront, and
+then finalizes the GitHub Release. See the [AWS deployment guide](aws-installer-releases.md)
+for required configuration. Ordinary merges do not publish releases.
 
 Build locally: `cargo build --locked --release`, run the tests, then
 `python .github/scripts/package-release.py --target <your rustc host triple>`.

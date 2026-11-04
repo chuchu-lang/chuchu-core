@@ -124,6 +124,9 @@ def main():
             options += ['-DLLVM_BUILD_LLVM_DYLIB=ON', '-DLLVM_LINK_LLVM_DYLIB=ON']
         run(options)
         run(['cmake', '--build', build, '--target', 'install', '--parallel', '3'])
+        notices = prefix / 'share/chuchu-licenses'
+        notices.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source.parent / 'LICENSE.TXT', notices / 'LLVM-LICENSE.txt')
         shutil.rmtree(build)
         shutil.rmtree(source.parent)
     activate(prefix)
