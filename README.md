@@ -219,8 +219,9 @@ before claiming compatibility.
 
 Self-hosted installer packaging and `cheeku update` are being implemented for
 Windows x64, macOS ARM64/Intel, and Linux x64 GNU. See the
-[installer guide](installer/README.md) for package generation, website download
-layout, update verification, and remaining release validation. These installers
+[installer guide](installer/README.md) for package generation, the S3 + CloudFront
+download layout at `https://downloads.chuchu-lang.org`, update verification, and
+remaining release validation. These installers
 are development artifacts until native and clean-machine checks pass.
 
 ## CI and distribution

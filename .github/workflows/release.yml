@@ -53,6 +53,8 @@ jobs:
       ref: ${{ needs.validate-release.outputs.commit }}
   draft-release:
     needs: build
+    env:
+      DOWNLOAD_BASE_URL: https://downloads.chuchu-lang.org
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -65,10 +67,10 @@ jobs:
           pattern: cheeku-*
           path: distributions
           merge-multiple: true
-      - name: Assemble website download manifest
+      - name: Assemble production download manifest
         env:
           RELEASE_TAG: ${{ inputs.tag }}
-        run: python installer/assemble.py --directory distributions --version "${RELEASE_TAG#v}"
+        run: python installer/assemble.py --directory distributions --version "${RELEASE_TAG#v}" --base-url "${{ env.DOWNLOAD_BASE_URL }}"
       - name: Create a draft containing only tested installers
         env:
           GH_TOKEN: ${{ github.token }}

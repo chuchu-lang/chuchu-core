@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge platform manifests into the marketing site's latest.json. Never publishes."""
+"""Merge platform manifests into the download site's latest.json. Never publishes."""
 import argparse
 import json
 from pathlib import Path
@@ -38,6 +38,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--version', required=True)
-    parser.add_argument('--base-url', default='https://chuchu-lang.org/downloads')
+    parser.add_argument('--base-url', default='https://downloads.chuchu-lang.org')
     args = parser.parse_args()
     assemble(args.directory, args.version, args.base_url)

@@ -14,7 +14,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const UPDATE_URL: &str = match option_env!("CHEEKU_UPDATE_URL") {
     Some(url) => url,
-    None => "https://chuchu-lang.org/downloads/latest.json",
+    None => "https://downloads.chuchu-lang.org/latest.json",
 };
 const HELP: &str = "Chuchu installer and launcher\n\
 Usage: cheeku install [--manifest <HTTPS URL or local JSON>] [--prefix <directory>] [--no-path] [--skip-dependencies]\n\

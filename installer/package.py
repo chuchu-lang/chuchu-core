@@ -250,7 +250,7 @@ launchctl asuser "$uid" sudo -H -u "$user" /usr/local/libexec/chuchu-installer/c
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', required=True, choices=TARGETS)
-    parser.add_argument('--base-url', default='https://chuchu-lang.org/downloads')
+    parser.add_argument('--base-url', default='https://downloads.chuchu-lang.org')
     parser.add_argument('--binary', type=Path)
     parser.add_argument('--manager', type=Path)
     parser.add_argument('--llvm-prefix', type=Path, default=Path(os.environ.get('LLVM_SYS_231_PREFIX', '/nonexistent')))

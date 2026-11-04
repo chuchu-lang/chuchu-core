@@ -20,6 +20,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       LLVM_SYS_231_STRICT_VERSIONING: '1'
+      DOWNLOAD_BASE_URL: https://downloads.chuchu-lang.org
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +125,8 @@ jobs:
                           '--compile-repetitions', '1', '--warmups', '0', '--no-throughput',
                           '--no-simd-probe', '--output', 'target/benchmark-smoke.json'], check=True)
       - name: Test and build the independent installer/updater
+        env:
+          CHEEKU_UPDATE_URL: ${{ format('{0}/latest.json', env.DOWNLOAD_BASE_URL) }}
         run: |
           cargo test --locked --manifest-path installer/manager/Cargo.toml
           cargo clippy --locked --manifest-path installer/manager/Cargo.toml --all-targets -- -D warnings
@@ -135,7 +138,7 @@ jobs:
           import os, subprocess
           subprocess.run(['python', 'installer/collect-notices.py', '--prefix', os.environ['LLVM_SYS_231_PREFIX']], check=True)
       - name: Package only after native tests pass
-        run: python installer/package.py --target ${{ inputs.target }}
+        run: python installer/package.py --target ${{ inputs.target }} --base-url "${{ env.DOWNLOAD_BASE_URL }}"
       - name: Verify install, update, failed update and launcher
         shell: python
         run: |
