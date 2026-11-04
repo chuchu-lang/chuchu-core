@@ -3,6 +3,7 @@ pub mod codegen;
 pub mod compiler;
 pub mod diagnostic;
 pub mod lexer;
+pub mod modules;
 pub mod native;
 pub mod optimization;
 pub mod parser;
