@@ -1,0 +1,409 @@
+// Chuchu Calculator: an interactive terminal calculator.
+//
+// Chuchu functions cannot see top-level variables and cannot be called as
+// statements, so the program is organised in three layers:
+//
+//   1. Text builders   return a string that the main loop prints with `show`.
+//   2. Input helpers   read and validate one answer from the user.
+//   3. Calculation     pure arithmetic and number formatting.
+//
+// The main loop at the bottom is a small state machine driven by `screen`.
+//
+// Error codes used with result values:
+//   1  end of input (built in)      2  invalid number (built in)
+//   8  the user typed "quit"        9  division by zero
+
+// ---------------------------------------------------------------------------
+// Layer 1: text builders
+// ---------------------------------------------------------------------------
+
+function heavy_rule() be string {
+    return "========================================"
+}
+
+function light_rule() be string {
+    return "----------------------------------------"
+}
+
+function spaces(count: int) be string {
+    assign text as ""
+    assign used as 0
+    while used < count {
+        reassign text as text + " "
+        reassign used as used + 1
+    }
+    return text
+}
+
+// Centre `text` inside the 40 character wide terminal layout.
+function centered(text: string) be string {
+    return spaces((40 - length(text)) / 2) + text
+}
+
+// A framed heading such as the title of a screen.
+function heading(title: string) be string {
+    return "\n" + heavy_rule() + "\n" + centered(title) + "\n" + heavy_rule()
+}
+
+function main_menu_text() be string {
+    assign text as heading("CHUCHU CALCULATOR") + "\n"
+    reassign text as text + centered("Simple. Fast. Powerful.") + "\n\n"
+    reassign text as text + centered("MAIN MENU") + "\n" + light_rule() + "\n"
+    reassign text as text + "  [1] Addition\n  [2] Subtraction\n"
+    reassign text as text + "  [3] Multiplication\n  [4] Division\n"
+    reassign text as text + "  [5] Calculation History\n  [0] Exit\n"
+    reassign text as text + light_rule() + "\n"
+    reassign text as text + "Type 'quit' at any prompt to leave."
+    return text
+}
+
+function after_calculation_menu_text() be string {
+    return "[1] New Calculation\n[2] Main Menu\n[0] Exit\n"
+}
+
+function history_menu_text() be string {
+    return light_rule() + "\n[1] Clear History\n[2] Main Menu\n[0] Exit\n"
+}
+
+// Operation codes: 1 add, 2 subtract, 3 multiply, 4 divide.
+function operation_title(operation: int) be string {
+    if operation == 1 {
+        return "ADDITION"
+    }
+    if operation == 2 {
+        return "SUBTRACTION"
+    }
+    if operation == 3 {
+        return "MULTIPLICATION"
+    }
+    return "DIVISION"
+}
+
+function operation_symbol(operation: int) be string {
+    if operation == 1 {
+        return "+"
+    }
+    if operation == 2 {
+        return "-"
+    }
+    if operation == 3 {
+        return "*"
+    }
+    return "/"
+}
+
+// ---------------------------------------------------------------------------
+// Layer 3: number formatting and arithmetic
+// ---------------------------------------------------------------------------
+
+// Round to the nearest whole number. Adding and removing 2^52 forces the
+// floating point hardware to drop the fraction. It is valid for |x| < 2^52.
+function round_to_whole(x: float) be float {
+    assign shift as 4503599627370496.0
+    return (x + shift) - shift
+}
+
+// Turn `scaled`, a non-negative whole number equal to value * 10^digits, into
+// text such as "12.5". Trailing zeros after the decimal point are dropped.
+function fixed_text(scaled: int, digits: int) be string {
+    assign unit as 1
+    assign step as 0
+    while step < digits {
+        reassign unit as unit * 10
+        reassign step as step + 1
+    }
+    assign whole as scaled / unit
+    assign fraction as scaled - whole * unit
+    if fraction == 0 {
+        return to_string(whole)
+    }
+
+    // Drop trailing zeros: 125000 with 6 digits becomes 125 with 3 digits.
+    assign trimming as true
+    while trimming {
+        assign tenth as fraction / 10
+        if fraction - tenth * 10 == 0 {
+            reassign fraction as tenth
+            reassign digits as digits - 1
+        } else {
+            reassign trimming as false
+        }
+    }
+
+    // Write the fraction digit by digit so leading zeros are kept (0.05).
+    assign decimals as ""
+    assign written as 0
+    while written < digits {
+        assign next as fraction / 10
+        reassign decimals as to_string(fraction - next * 10) + decimals
+        reassign fraction as next
+        reassign written as written + 1
+    }
+    return to_string(whole) + "." + decimals
+}
+
+// Format a number for display. `to_string` shows every binary digit of a float
+// (0.1 becomes 0.10000000000000001), so numbers are rounded to at most 8
+// decimals (4 for values from 10,000,000 up, 16 for values below 0.0000001) and
+// printed without trailing zeros. Values outside 0.000000000001 to 100 billion
+// cannot be scaled safely and fall back to `to_string`.
+function format_number(value: float) be string {
+    assign magnitude as abs(value)
+    if magnitude == 0.0 {
+        return "0"
+    }
+    assign sign as ""
+    if value < 0.0 {
+        reassign sign as "-"
+    }
+
+    // Pick how many decimals to keep so that magnitude * factor stays below
+    // 2^52, where round_to_whole is exact.
+    assign digits as 0
+    assign factor as 1.0
+    if magnitude >= 0.0000001 {
+        if magnitude < 10000000.0 {
+            reassign digits as 8
+            reassign factor as 100000000.0
+        } else {
+            if magnitude < 100000000000.0 {
+                reassign digits as 4
+                reassign factor as 10000.0
+            }
+        }
+    } else {
+        if magnitude >= 0.000000000001 {
+            reassign digits as 16
+            reassign factor as 10000000000000000.0
+        }
+    }
+    if digits == 0 {
+        return to_string(value)
+    }
+
+    assign scaled as parse_int(to_string(round_to_whole(magnitude * factor)))
+    if is_ok(scaled) {
+        return sign + fixed_text(unwrap(scaled), digits)
+    }
+    return to_string(value)
+}
+
+// Pure arithmetic. Fails with code 9 when dividing by zero.
+function calculate(operation: int, left: float, right: float) be result<float> {
+    if operation == 1 {
+        return ok(left + right)
+    }
+    if operation == 2 {
+        return ok(left - right)
+    }
+    if operation == 3 {
+        return ok(left * right)
+    }
+    if right == 0.0 {
+        return err<float>(9)
+    }
+    return ok(left / right)
+}
+
+// One finished calculation as text, such as "23 + 12 = 35".
+function describe(operation: int, left: float, right: float, answer: float) be string {
+    return format_number(left) + " " + operation_symbol(operation) + " " + format_number(right) + " = " + format_number(answer)
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2: input helpers
+// ---------------------------------------------------------------------------
+
+// Ask for a menu choice between 0 and `highest`. Keeps asking until the answer
+// is valid. Returns -1 when the user types "quit" or the input ends.
+function ask_choice(prompt: string, highest: int) be int {
+    assign choice as -1
+    assign waiting as true
+    while waiting {
+        assign line as try_input(prompt)
+        if is_ok(line) {
+            assign text as unwrap(line)
+            if text == "quit" {
+                reassign waiting as false
+            } else {
+                assign picked as -2
+                assign parsed as parse_int(text)
+                if is_ok(parsed) {
+                    assign number as unwrap(parsed)
+                    if number >= 0 {
+                        if number <= highest {
+                            reassign picked as number
+                        }
+                    }
+                }
+                if picked == -2 {
+                    if text == "" {
+                        show "  Error: Nothing entered. Choose a number from 0 to " + to_string(highest) + "."
+                    } else {
+                        show "  Error: '" + text + "' is not a valid option. Choose a number from 0 to " + to_string(highest) + "."
+                    }
+                } else {
+                    reassign choice as picked
+                    reassign waiting as false
+                }
+            }
+        } else {
+            // End of input (Ctrl+D) or a read failure: finish the prompt line.
+            show ""
+            reassign waiting as false
+        }
+    }
+    return choice
+}
+
+// Ask for a number. Keeps asking until the answer is valid. Fails with code 8
+// when the user types "quit" and with code 1 when the input ends.
+function ask_number(prompt: string) be result<float> {
+    assign outcome as err<float>(8)
+    assign waiting as true
+    while waiting {
+        assign line as try_input(prompt)
+        if is_ok(line) {
+            assign text as unwrap(line)
+            if text == "quit" {
+                reassign waiting as false
+            } else {
+                if text == "" {
+                    show "  Error: Nothing entered. Type a number, or 'quit' to leave."
+                } else {
+                    assign parsed as parse_float(text)
+                    if is_ok(parsed) {
+                        reassign outcome as parsed
+                        reassign waiting as false
+                    } else {
+                        if error_code(parsed) == 2 {
+                            show "  Error: '" + text + "' is not a number. Try 12, -3.5 or 0.25."
+                        } else {
+                            show "  Error: '" + text + "' cannot be used: " + error_message(parsed) + "."
+                        }
+                    }
+                }
+            }
+        } else {
+            // End of input (Ctrl+D) or a read failure: finish the prompt line.
+            show ""
+            reassign outcome as err<float>(error_code(line))
+            reassign waiting as false
+        }
+    }
+    return outcome
+}
+
+// ---------------------------------------------------------------------------
+// Main program
+// ---------------------------------------------------------------------------
+//
+// Screens: 0 main menu, 1 calculation, 2 after a calculation,
+//          3 history, 4 leave the program.
+//
+// The history is bounded only by memory. It is one string that holds one
+// numbered line per calculation, plus a counter. It is not saved to disk.
+
+assign screen as 0
+assign operation as 1
+assign history as ""
+assign history_count as 0
+
+while screen != 4 {
+    if screen == 0 {
+        show main_menu_text()
+        show ""
+        assign choice as ask_choice("Select an option: ", 5)
+        if choice == 5 {
+            reassign screen as 3
+        } else {
+            if choice >= 1 {
+                reassign operation as choice
+                reassign screen as 1
+            } else {
+                reassign screen as 4
+            }
+        }
+    }
+
+    if screen == 1 {
+        show heading(operation_title(operation))
+        show ""
+        assign first as ask_number("Enter first number: ")
+        if is_ok(first) {
+            assign asking as true
+            while asking {
+                assign second as ask_number("Enter second number: ")
+                if is_ok(second) {
+                    assign answer as calculate(operation, unwrap(first), unwrap(second))
+                    if is_ok(answer) {
+                        assign summary as describe(operation, unwrap(first), unwrap(second), unwrap(answer))
+                        show ""
+                        show light_rule()
+                        show "  " + summary
+                        show light_rule()
+                        show ""
+                        reassign history_count as history_count + 1
+                        reassign history as history + "  " + to_string(history_count) + ". " + summary + "\n"
+                        reassign asking as false
+                        reassign screen as 2
+                    } else {
+                        show "  Error: Division by zero is undefined. Enter a different second number."
+                    }
+                } else {
+                    reassign asking as false
+                    reassign screen as 4
+                }
+            }
+        } else {
+            reassign screen as 4
+        }
+    }
+
+    if screen == 2 {
+        show after_calculation_menu_text()
+        assign next_step as ask_choice("Select an option: ", 2)
+        if next_step == 1 {
+            reassign screen as 1
+        } else {
+            if next_step == 2 {
+                reassign screen as 0
+            } else {
+                reassign screen as 4
+            }
+        }
+    }
+
+    if screen == 3 {
+        show heading("CALCULATION HISTORY")
+        show ""
+        if history_count == 0 {
+            show "  No calculations yet."
+            show ""
+        } else {
+            show history
+        }
+        show history_menu_text()
+        assign history_step as ask_choice("Select an option: ", 2)
+        if history_step == 1 {
+            if history_count == 0 {
+                show "  History is already empty."
+            } else {
+                reassign history as ""
+                reassign history_count as 0
+                show "  History cleared."
+            }
+        } else {
+            if history_step == 2 {
+                reassign screen as 0
+            } else {
+                reassign screen as 4
+            }
+        }
+    }
+}
+
+show ""
+show heavy_rule()
+show centered("Thank you for using Chuchu Calculator!")
+show heavy_rule()
