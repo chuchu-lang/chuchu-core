@@ -114,7 +114,10 @@ def bundle_linux(binary, lib):
 def archive_payload(payload, output, windows):
     paths = sorted(p for p in payload.rglob('*') if p.is_file())
     if windows:
-        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+        # Bundled LLVM files can predate 1980; clamp timestamps to ZIP's range.
+        with zipfile.ZipFile(
+            output, 'w', compression=zipfile.ZIP_DEFLATED, strict_timestamps=False,
+        ) as archive:
             for path in paths:
                 archive.write(path, path.relative_to(payload).as_posix())
     else:
