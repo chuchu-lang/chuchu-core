@@ -86,6 +86,39 @@ fn developer_shell() -> Result<PathBuf> {
     }
     Ok(path)
 }
+#[cfg(target_os = "windows")]
+fn visual_studio_environment(shell: &Path) -> Result<String> {
+    use std::os::windows::process::CommandExt;
+
+    // VsDevCmd is vendor-installed. Reject shell metacharacters before invoking cmd.
+    let path = shell.to_str().ok_or("Non-UTF-8 VS toolchain path")?;
+    if path.contains(['"', '%', '!', '&', '|', '<', '>', '^', '\r', '\n']) {
+        return Err("Unsupported character in Visual Studio installation path".into());
+    }
+    let output = Command::new("cmd.exe")
+        .args(["/d", "/u", "/s", "/c"])
+        // cmd.exe needs literal nested quotes, not C runtime argument escaping.
+        .raw_arg(format!(
+            "\"\"{path}\" -arch=x64 -host_arch=x64 >nul && set\""
+        ))
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "Cannot initialize the Visual Studio toolchain ({})",
+            output.status
+        )
+        .into());
+    }
+    if output.stdout.len() % 2 != 0 {
+        return Err("Invalid UTF-16 toolchain environment".into());
+    }
+    let units: Vec<u16> = output
+        .stdout
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    Ok(String::from_utf16(&units)?)
+}
 pub fn configure_compiler(command: &mut Command, version: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -99,32 +132,7 @@ pub fn configure_compiler(command: &mut Command, version: &Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         let shell = developer_shell()?;
-        // VsDevCmd is vendor-installed. Reject shell metacharacters before invoking cmd.
-        let path = shell.to_str().ok_or("Non-UTF-8 VS toolchain path")?;
-        if path.contains(['"', '%', '!', '&', '|', '<', '>', '^', '\r', '\n']) {
-            return Err("Unsupported character in Visual Studio installation path".into());
-        }
-        let output = Command::new("cmd.exe")
-            .args([
-                "/d",
-                "/u",
-                "/s",
-                "/c",
-                &format!("\"\"{path}\" -arch=x64 -host_arch=x64 >nul && set\""),
-            ])
-            .output()?;
-        if !output.status.success() {
-            return Err("Cannot initialize the Visual Studio toolchain".into());
-        }
-        if output.stdout.len() % 2 != 0 {
-            return Err("Invalid UTF-16 toolchain environment".into());
-        }
-        let units: Vec<u16> = output
-            .stdout
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        let environment = String::from_utf16(&units)?;
+        let environment = visual_studio_environment(&shell)?;
         for line in environment.lines() {
             if let Some((name, value)) = line.split_once('=')
                 && !name.is_empty()
@@ -221,4 +229,35 @@ pub fn add_to_path(bin: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn developer_environment_handles_spaces_and_unicode() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("Visual Studio fixture with spaces é");
+        std::fs::create_dir(&directory).unwrap();
+        let script = directory.join("VsDevCmd.bat");
+        std::fs::write(
+            &script,
+            "@echo off\r\nif not \"%1\"==\"-arch=x64\" exit /b 2\r\nif not \"%2\"==\"-host_arch=x64\" exit /b 3\r\nset \"CHEEKU_TEST_TOOLCHAIN=%~dp0\"\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        let environment = visual_studio_environment(&script).unwrap();
+        let expected = format!("CHEEKU_TEST_TOOLCHAIN={}\\", directory.display());
+        assert!(environment.lines().any(|line| line == expected));
+    }
+
+    #[test]
+    fn developer_environment_reports_script_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("broken toolchain.bat");
+        std::fs::write(&script, "@exit /b 42\r\n").unwrap();
+        let error = visual_studio_environment(&script).unwrap_err().to_string();
+        assert!(error.contains("Cannot initialize the Visual Studio toolchain"));
+        assert!(error.contains("42"), "{error}");
+    }
 }
