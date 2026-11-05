@@ -51,6 +51,7 @@ fn version(value: &str) -> Result<()> {
 }
 fn client() -> Result<reqwest::blocking::Client> {
     Ok(reqwest::blocking::Client::builder()
+        .user_agent(concat!("cheeku-manager/", env!("CARGO_PKG_VERSION")))
         .https_only(true)
         .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(900))
