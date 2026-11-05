@@ -501,7 +501,7 @@ impl<'ctx> Generator<'ctx> {
         let span = expr.span;
         match &expr.kind {
             ExprKind::RecordInit { name, fields } => self.record_init(name, fields, span),
-            ExprKind::FieldAccess { object, field } => self.field_access(object, field, span),
+            ExprKind::FieldAccess { target, field } => self.field_access(target, field, span),
             ExprKind::Error { payload, code } => {
                 let code = self.expression(code)?.int(span)?;
                 self.error_result(*payload, code, span)
@@ -969,7 +969,6 @@ impl<'ctx> Generator<'ctx> {
                 let value = self.expression(value)?;
                 self.declare(name, value, span, None)
             }
-            StmtKind::Record { .. } => Ok(()),
             StmtKind::Assign { name, value } => {
                 let binding = self.lookup(name, span)?;
                 let value = self.expression(value)?;
@@ -978,6 +977,7 @@ impl<'ctx> Generator<'ctx> {
                 build(self.builder.build_store(binding.pointer, value.raw), span)?;
                 Ok(())
             }
+
             StmtKind::Show(expr) => {
                 let value = self.expression(expr)?;
                 self.output(value.clone(), span)?;
@@ -1056,6 +1056,7 @@ impl<'ctx> Generator<'ctx> {
             }
             StmtKind::Function { .. } => Err(invalid("Nested functions are unsupported", span)),
             StmtKind::AssignField { target, value } => self.assign_field(target, value, span),
+            StmtKind::Record { .. } => Ok(()),
         }
     }
 }

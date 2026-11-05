@@ -67,7 +67,7 @@ impl<'ctx> Generator<'ctx> {
                 let binding = self.lookup(name, expr.span)?;
                 Ok(Some((binding.pointer, binding.ty)))
             }
-            ExprKind::FieldAccess { object, field } => match self.place(object)? {
+            ExprKind::FieldAccess { target, field } => match self.place(target)? {
                 Some((pointer, ty)) => self.field_pointer(pointer, ty, field, expr.span).map(Some),
                 None => Ok(None),
             },

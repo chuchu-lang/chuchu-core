@@ -14,7 +14,7 @@ enum CliError {
     Optimization(InvalidOptimization),
     Compile {
         input: PathBuf,
-        source: chuchu::compiler::CompileError,
+        source: Box<chuchu::compiler::CompileError>,
         text: Option<String>,
     },
 }
@@ -137,7 +137,7 @@ fn run() -> Result<(), CliError> {
     .map_err(|source| CliError::Compile {
         text: std::fs::read_to_string(&invocation.input).ok(),
         input: invocation.input,
-        source,
+        source: Box::new(source),
     })?;
     if invocation.time {
         eprintln!("{}", timings.json());

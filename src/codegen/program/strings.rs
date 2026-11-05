@@ -120,13 +120,13 @@ impl<'ctx> Generator<'ctx> {
     /// Whether a value of this type owns allocations that must be copied with it
     /// and released after it: strings, results of strings, and records that
     /// contain either, however deeply nested.
-    pub(super) fn owns(&self, ty: Type) -> bool {
+    pub(super) fn owns(&self, ty: &Type) -> bool {
         match ty {
             Type::String | Type::Result(ScalarType::String) => true,
             Type::Record(id) => self
                 .records
-                .get(id)
-                .is_some_and(|layout| layout.fields().iter().any(|field| self.owns(field.ty))),
+                .get(*id)
+                .is_some_and(|layout| layout.fields().iter().any(|field| self.owns(&field.ty))),
             _ => false,
         }
     }
@@ -138,10 +138,11 @@ impl<'ctx> Generator<'ctx> {
         value: Value<'ctx>,
         span: Span,
     ) -> Result<Value<'ctx>, CodegenError> {
-        match value.ty {
+        match &value.ty {
             Type::String => self.copy_string(value, span),
             Type::Result(ScalarType::String) => self.copy_result(value, span),
-            Type::Record(id) if self.owns(value.ty) => {
+            Type::Record(id) if self.owns(&value.ty) => {
+                let id = *id;
                 let layout = self
                     .records
                     .get(id)
@@ -154,7 +155,7 @@ impl<'ctx> Generator<'ctx> {
                 let owning: Vec<_> = layout
                     .fields()
                     .iter()
-                    .filter(|field| self.owns(field.ty))
+                    .filter(|field| self.owns(&field.ty))
                     .cloned()
                     .collect();
                 for field in &owning {
@@ -186,7 +187,7 @@ impl<'ctx> Generator<'ctx> {
 
     /// Releases every allocation a value owns. The value must not be used again.
     pub(super) fn release_value(&self, value: Value<'ctx>, span: Span) -> Result<(), CodegenError> {
-        match value.ty {
+        match &value.ty {
             Type::Result(ScalarType::String) => {
                 let payload = self.result_payload(value, span)?;
                 self.release_value(payload, span)?;
@@ -201,7 +202,8 @@ impl<'ctx> Generator<'ctx> {
                 )?;
                 build(self.builder.build_call(free, &[pointer.into()], ""), span)?;
             }
-            Type::Record(id) if self.owns(value.ty) => {
+            Type::Record(id) if self.owns(&value.ty) => {
+                let id = *id;
                 let layout = self
                     .records
                     .get(id)
@@ -209,7 +211,7 @@ impl<'ctx> Generator<'ctx> {
                 let BasicValueEnum::StructValue(aggregate) = value.raw else {
                     return Err(invalid("Expected record LLVM value", span));
                 };
-                for field in layout.fields().iter().filter(|field| self.owns(field.ty)) {
+                for field in layout.fields().iter().filter(|field| self.owns(&field.ty)) {
                     let raw = build(
                         self.builder
                             .build_extract_value(aggregate, field.index, &field.name),
@@ -231,7 +233,7 @@ impl<'ctx> Generator<'ctx> {
         ty: Type,
         span: Span,
     ) -> Result<(), CodegenError> {
-        if self.owns(ty) {
+        if self.owns(&ty) {
             let raw = build(
                 self.builder
                     .build_load(self.llvm_type(&ty, span)?, pointer, "release"),

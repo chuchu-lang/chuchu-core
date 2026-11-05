@@ -165,7 +165,6 @@ pub fn optimize(
     machine: &TargetMachine,
     options: &BuildOptions,
 ) -> Result<(), OptimizationError> {
-    #[cfg(not(target_os = "windows"))]
     module
         .verify()
         .map_err(|error| OptimizationError::Verification(error.to_string()))?;
@@ -177,19 +176,13 @@ pub fn optimize(
         passes.set_loop_vectorization(vectorize);
         passes.set_loop_slp_vectorization(vectorize);
         passes.set_loop_interleaving(vectorize);
-        let res = module.run_passes(pipeline, machine, passes);
-        res.map_err(|error| OptimizationError::Pipeline(error.to_string()))?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
         module
-            .verify()
-            .map_err(|error| OptimizationError::Verification(error.to_string()))
+            .run_passes(pipeline, machine, passes)
+            .map_err(|error| OptimizationError::Pipeline(error.to_string()))?;
     }
-    #[cfg(target_os = "windows")]
-    {
-        Ok(())
-    }
+    module
+        .verify()
+        .map_err(|error| OptimizationError::Verification(error.to_string()))
 }
 
 #[cfg(test)]

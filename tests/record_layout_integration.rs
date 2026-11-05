@@ -289,7 +289,7 @@ fn field_indices_follow_declaration_order() {
     assert_eq!(other.field_index("zeta"), Some(1));
     // The struct's element types are in the same order as the indices.
     for field in record.fields() {
-        let expected = match field.ty {
+        let expected = match &field.ty {
             Type::Int => context.i64_type().as_basic_type_enum(),
             Type::Float => context.f64_type().as_basic_type_enum(),
             Type::Bool => context.bool_type().as_basic_type_enum(),
