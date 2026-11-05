@@ -246,7 +246,7 @@ impl Parser {
             TokenKind::Identifier(name) if name == "string" => Type::String,
             _ => {
                 return Err(ParseError::ExpectedToken {
-                    expected: "type annotation",
+                    expected: "int, float, bool, string, or result<T> type",
                     span: token.span,
                 });
             }
@@ -492,7 +492,7 @@ impl Parser {
         let expression = self.atom()?;
         let mut fields = Vec::new();
         let mut root = &expression;
-        while let ExprKind::FieldAccess { object, field } = &root.kind {
+        while let ExprKind::FieldAccess { target, field } = &root.kind {
             fields.push(FieldName {
                 name: field.clone(),
                 // An access ends with its field name.
@@ -501,7 +501,7 @@ impl Parser {
                     end: root.span.end,
                 },
             });
-            root = object;
+            root = target;
         }
         fields.reverse();
         match &root.kind {
@@ -747,8 +747,8 @@ impl Parser {
             if self.at(&TokenKind::LeftParen) {
                 let name = match expression.kind {
                     ExprKind::Identifier(name) => name,
-                    ExprKind::FieldAccess { object, field } => {
-                        let ExprKind::Identifier(module) = object.kind else {
+                    ExprKind::FieldAccess { target, field } => {
+                        let ExprKind::Identifier(module) = target.kind else {
                             return Err(ParseError::ExpectedExpression {
                                 span: expression.span,
                             });
@@ -794,7 +794,7 @@ impl Parser {
                 };
                 expression = Expr {
                     kind: ExprKind::FieldAccess {
-                        object: Box::new(expression),
+                        target: Box::new(expression),
                         field,
                     },
                     span,
@@ -1357,7 +1357,7 @@ mod tests {
 
     #[test]
     fn parses_record_declaration_instantiation_and_field_access() {
-        let source = "record Point {\n x: int\n y: int\n}\nassign p as Point {\n x: 10\n y: 20\n}\nreassign p.x as 30\nshow p.x";
+        let source = "record Point {\n    x: int\n    y: int\n}\nassign p as Point {\n    x: 10\n    y: 20\n}\nreassign p.x as 30\nshow p.x";
         let mut parser = Parser::new(tokenize(source).unwrap());
         let stmts = parser
             .parse_program()
@@ -1411,8 +1411,8 @@ mod tests {
         // 4. Field access
         match &stmts[3].kind {
             StmtKind::Show(expr) => match &expr.kind {
-                ExprKind::FieldAccess { object, field } => {
-                    match &object.kind {
+                ExprKind::FieldAccess { target, field } => {
+                    match &target.kind {
                         ExprKind::Identifier(name) => assert_eq!(name, "p"),
                         _ => panic!("Expected Identifier target"),
                     }

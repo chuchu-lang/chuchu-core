@@ -44,7 +44,7 @@ fn ident(name: &str) -> TokenKind {
 /// `object.field` pieces of a field access.
 fn access(expression: &Expr) -> (&Expr, &str) {
     match &expression.kind {
-        ExprKind::FieldAccess { object, field } => (object, field),
+        ExprKind::FieldAccess { target, field } => (target, field),
         other => panic!("expected a field access, found {other:?}"),
     }
 }

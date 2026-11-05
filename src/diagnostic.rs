@@ -413,30 +413,7 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                 format!("this expression has type {actual}"),
                 None,
             ),
-            TypeError::UndefinedField { record, field, span } => (
-                *span,
-                format!("Record '{record}' has no field '{field}'"),
-                "field not found in record definition".into(),
-                Some(format!("Check the definition of 'record {record}' for available fields.")),
-            ),
-            TypeError::MissingField { record, field, span } => (
-                *span,
-                format!("Missing required field '{field}' in '{record}' instantiation"),
-                format!("field '{field}' must be specified"),
-                Some(format!("Provide '{field}: <value>' in the record instantiation.")),
-            ),
-            TypeError::NotARecord { ty, span } => (
-                *span,
-                format!("Type '{}' is not a record", type_name(ty)),
-                "field access requires a record value".into(),
-                None,
-            ),
-            TypeError::InvalidRecord { name, message, span } => (
-                *span,
-                format!("Invalid record '{name}': {message}"),
-                message.to_string(),
-                None,
-            ),
+
         },
         _ => return None,
     };

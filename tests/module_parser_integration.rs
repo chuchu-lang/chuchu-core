@@ -83,11 +83,11 @@ fn module_calls_and_record_fields_keep_distinct_ast_shapes() {
     };
     assert_eq!(name, "math.add");
     assert!(
-        matches!(&arguments[0].kind, ExprKind::FieldAccess { object, field }
-        if field == "x" && matches!(&object.kind, ExprKind::Identifier(name) if name == "point"))
+        matches!(&arguments[0].kind, ExprKind::FieldAccess { target, field }
+        if field == "x" && matches!(&target.kind, ExprKind::Identifier(name) if name == "point"))
     );
     assert!(
-        matches!(&arguments[1].kind, ExprKind::FieldAccess { object, field }
-        if field == "y" && matches!(&object.kind, ExprKind::FieldAccess { field, .. } if field == "nested"))
+        matches!(&arguments[1].kind, ExprKind::FieldAccess { target, field }
+        if field == "y" && matches!(&target.kind, ExprKind::FieldAccess { field, .. } if field == "nested"))
     );
 }

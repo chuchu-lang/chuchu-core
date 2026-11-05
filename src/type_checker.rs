@@ -64,11 +64,7 @@ pub enum TypeError {
         field: String,
         span: Span,
     },
-    UndefinedField {
-        record: String,
-        field: String,
-        span: Span,
-    },
+
     RecordNotTopLevel {
         name: String,
         span: Span,
@@ -94,20 +90,7 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
-    MissingField {
-        record: String,
-        field: String,
-        span: Span,
-    },
-    NotARecord {
-        ty: Type,
-        span: Span,
-    },
-    InvalidRecord {
-        name: String,
-        message: &'static str,
-        span: Span,
-    },
+
     /// An initializer sets, or an access reads, a field the record does not have.
     UnknownField {
         record: String,
@@ -353,6 +336,7 @@ impl TypeChecker {
         self.validate_records(statements, true)?;
         self.resolve_record_types(statements)?;
         self.records_validated = true;
+
         for stmt in statements {
             if let StmtKind::Function {
                 name,
@@ -543,6 +527,7 @@ impl TypeChecker {
         }
         Ok(())
     }
+
     fn block(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
         self.symbols.enter_scope();
         self.depth += 1;
@@ -624,14 +609,14 @@ impl TypeChecker {
     }
     /// Checks `object.field`: the object is a record that declares the field. The
     /// result is the field's type, so chains such as `a.b.c` resolve one link at a time.
-    fn field_access(&self, object: &Expr, field: &str, span: Span) -> Result<Type, TypeError> {
-        let ty = self.infer_expression(object)?;
+    fn field_access(&self, target: &Expr, field: &str, span: Span) -> Result<Type, TypeError> {
+        let ty = self.infer_expression(target)?;
         // The span of an access ends with the field name.
         let field_span = Span {
             start: span.end - field.len(),
             end: span.end,
         };
-        self.field_of(ty, field, object.span, field_span, false)
+        self.field_of(ty, field, target.span, field_span, false)
             .map(|(_, field_ty)| field_ty)
     }
     /// Looks up `field` on a value of type `ty`, returning the record that declares
@@ -912,7 +897,7 @@ impl TypeChecker {
     pub fn infer_expression(&self, expr: &Expr) -> Result<Type, TypeError> {
         match &expr.kind {
             ExprKind::RecordInit { name, fields } => self.record_init(name, fields, expr.span),
-            ExprKind::FieldAccess { object, field } => self.field_access(object, field, expr.span),
+            ExprKind::FieldAccess { target, field } => self.field_access(target, field, expr.span),
             ExprKind::Integer(_) => Ok(Type::Int),
             ExprKind::Float(literal) => {
                 if literal.parse::<f64>().is_ok_and(f64::is_finite) {

@@ -29,7 +29,7 @@ pub enum ExprKind {
     },
     Identifier(String),
     FieldAccess {
-        object: Box<Expr>,
+        target: Box<Expr>,
         field: String,
     },
     RecordInit {
