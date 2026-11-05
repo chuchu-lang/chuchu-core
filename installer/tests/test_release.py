@@ -167,7 +167,8 @@ class ReleaseTests(unittest.TestCase):
         for tag in ['0.1.0', 'v01.1.0', 'v1.0', 'v1.0.0-01', 'v1.0.0+build', 'v1.0.0/', 'v1.0.0-']:
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 validate_tag(tag, tag.removeprefix('v'))
-        with self.assertRaisesRegex(ValueError, 'match'):
+        with self.assertRaisesRegex(
+                ValueError, r"Release tag 'v0\.1\.1'.*version '0\.1\.0' \(expected tag: v0\.1\.0\)"):
             validate_tag('v0.1.1', '0.1.0')
 
     def test_complete_release_and_idempotent_assembly(self):

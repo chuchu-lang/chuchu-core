@@ -31,7 +31,9 @@ def validate_tag(tag, compiler_version):
         raise ValueError('Release tag must start with v')
     version_key(tag[1:])
     if tag != 'v' + compiler_version:
-        raise ValueError('Release tag must match the committed root Cargo.toml version')
+        raise ValueError(
+            f'Release tag {tag!r} must match the committed root Cargo.toml version '
+            f'{compiler_version!r} (expected tag: v{compiler_version})')
     return compiler_version
 
 
