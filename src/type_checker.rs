@@ -2,7 +2,7 @@ use crate::ast::{
     BinaryOperator, Expr, ExprKind, FieldInit, FieldTarget, FieldType, RecordField, Stmt, StmtKind,
 };
 use crate::records::{FieldInfo, RecordInfo, RecordTable};
-use crate::symbol_table::{SymbolError, SymbolTable};
+use crate::symbol_table::{Resolved, SymbolError, SymbolTable};
 use crate::token::Span;
 use crate::types::{MAX_ARRAY_LEN, NumericType, RecordId, ScalarType, Type};
 use std::collections::{HashMap, HashSet};
@@ -10,6 +10,11 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeError {
     UndefinedVariable {
+        name: String,
+        span: Span,
+    },
+    /// A variable made with `declare` was read before every path gave it a value.
+    UseBeforeAssignment {
         name: String,
         span: Span,
     },
@@ -528,6 +533,22 @@ impl TypeChecker {
         Ok(())
     }
 
+    /// The error for a name that cannot be read: unknown, or declared with
+    /// `declare` but not yet assigned on every path.
+    fn unavailable(&self, name: &str, span: Span) -> TypeError {
+        if self.symbols.is_unassigned(name) {
+            TypeError::UseBeforeAssignment {
+                name: name.to_owned(),
+                span,
+            }
+        } else {
+            TypeError::UndefinedVariable {
+                name: name.to_owned(),
+                span,
+            }
+        }
+    }
+
     fn block(&mut self, statements: &[Stmt]) -> Result<(), TypeError> {
         self.symbols.enter_scope();
         self.depth += 1;
@@ -668,10 +689,7 @@ impl TypeChecker {
         let mut ty =
             self.symbols
                 .lookup(&target.variable)
-                .ok_or_else(|| TypeError::UndefinedVariable {
-                    name: target.variable.clone(),
-                    span: target.variable_span,
-                })?;
+                .ok_or_else(|| self.unavailable(&target.variable, target.variable_span))?;
         let mut owner = "";
         let mut object_span = target.variable_span;
         for field in &target.fields {
@@ -779,15 +797,39 @@ impl TypeChecker {
                         }
                     })
             }
+            StmtKind::Declare { name } => {
+                self.symbols
+                    .declare_deferred(name.clone())
+                    .map_err(|error| match error {
+                        SymbolError::DuplicateDeclaration { name } => {
+                            TypeError::DuplicateDeclaration {
+                                name,
+                                span: stmt.span,
+                            }
+                        }
+                    })
+            }
             StmtKind::Assign { name, value } => {
-                let ty = self
+                match self
                     .symbols
-                    .lookup(name)
+                    .resolve(name)
                     .ok_or_else(|| TypeError::UndefinedVariable {
                         name: name.clone(),
                         span: stmt.span,
-                    })?;
-                self.mismatch(ty, value)
+                    })? {
+                    Resolved::Value(ty) => self.mismatch(ty, value),
+                    Resolved::Deferred(Some(ty)) => {
+                        self.mismatch(ty, value)?;
+                        self.symbols.assign_deferred(name, ty);
+                        Ok(())
+                    }
+                    // The first assignment decides the type.
+                    Resolved::Deferred(None) => {
+                        let ty = self.infer_expression(value)?;
+                        self.symbols.assign_deferred(name, ty);
+                        Ok(())
+                    }
+                }
             }
             StmtKind::AssignField { target, value } => self.assign_field(target, value),
             StmtKind::Show(expr) => {
@@ -823,8 +865,22 @@ impl TypeChecker {
                         span: condition.span,
                     });
                 }
+                // A `declare`d variable is readable afterwards only if every path
+                // that reaches the end of the statement assigned it.
+                let before = self.symbols.assigned_set();
                 self.block(then_body)?;
-                self.block(else_body)
+                let after_then = self.symbols.assigned_set();
+                self.symbols.set_assigned(&before);
+                self.block(else_body)?;
+                let after_else = self.symbols.assigned_set();
+                let merged = match (returns(then_body), returns(else_body)) {
+                    (true, true) => after_then.union(&after_else).cloned().collect(),
+                    (true, false) => after_else,
+                    (false, true) => after_then,
+                    (false, false) => after_then.intersection(&after_else).cloned().collect(),
+                };
+                self.symbols.set_assigned(&merged);
+                Ok(())
             }
             StmtKind::While { condition, body } => {
                 if self.infer_expression(condition)? != Type::Bool {
@@ -832,7 +888,11 @@ impl TypeChecker {
                         span: condition.span,
                     });
                 }
-                self.block(body)
+                // The body may run zero times, so its assignments do not count.
+                let before = self.symbols.assigned_set();
+                self.block(body)?;
+                self.symbols.set_assigned(&before);
+                Ok(())
             }
             StmtKind::Return(expr) => {
                 let ty = self
@@ -918,10 +978,7 @@ impl TypeChecker {
             ExprKind::Identifier(name) => {
                 self.symbols
                     .lookup(name)
-                    .ok_or_else(|| TypeError::UndefinedVariable {
-                        name: name.clone(),
-                        span: expr.span,
-                    })
+                    .ok_or_else(|| self.unavailable(name, expr.span))
             }
             ExprKind::Negate(inner) => {
                 let ty = self.infer_expression(inner)?;

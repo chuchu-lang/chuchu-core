@@ -211,6 +211,14 @@ fn describe(error: &CompileError, source: &str) -> Option<Diagnostic> {
                     "Declare '{name}' with 'assign {name} as <value>' before using it, or check its spelling."
                 )),
             ),
+            TypeError::UseBeforeAssignment { name, span } => (
+                *span,
+                format!("Variable '{name}' may be used before it has a value"),
+                "not assigned on every path that reaches here".into(),
+                Some(format!(
+                    "Give '{name}' a value with 'reassign {name} as <value>' on every path before reading it."
+                )),
+            ),
             TypeError::DuplicateDeclaration { name, span } => (
                 *span,
                 format!("Duplicate declaration of '{name}'"),

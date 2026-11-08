@@ -1,0 +1,4 @@
+declare total
+reassign total as 40
+reassign total as total + 2
+show total

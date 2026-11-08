@@ -2,6 +2,8 @@
 pub enum TokenKind {
     /// Variable declaration keyword: `assign`.
     Set,
+    /// Deferred variable declaration keyword: `declare`.
+    Declare,
     /// Assignment separator keyword: `as`.
     As,
     Show,

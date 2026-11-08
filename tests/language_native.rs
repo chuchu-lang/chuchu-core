@@ -270,3 +270,53 @@ fn invalid_programs_preserve_existing_executable() {
         assert_eq!(fs::read(&executable).unwrap(), b"previous executable");
     }
 }
+
+fn rejects(source: &str, message: &str) {
+    let case = Case::new();
+    let compiled = case.compile(source);
+    assert!(!compiled.status.success(), "Source:\n{source}");
+    let stderr = String::from_utf8_lossy(&compiled.stderr);
+    assert!(stderr.contains(message), "{stderr}");
+}
+
+#[test]
+fn declare_takes_its_type_from_the_first_assignment() {
+    succeeds(
+        "declare n\ndeclare s\ndeclare f\nreassign n as 10\nreassign s as \"hi\"\nreassign f as 1.5\nreassign n as n + 5\nreassign s as s + \" there\"\nshow n\nshow s\nshow f",
+        "15\nhi there\n1.5\n",
+    );
+}
+#[test]
+fn declare_is_readable_after_every_branch_assigns_it() {
+    succeeds(
+        "function pick(n: int) be int {\n    declare r\n    if n > 0 {\n        reassign r as n * 2\n    } else {\n        reassign r as 0\n    }\n    return r\n}\nshow pick(4)\nshow pick(0)",
+        "8\n0\n",
+    );
+}
+#[test]
+fn declare_string_assigned_in_a_loop() {
+    succeeds(
+        "declare s\nassign i as 0\nwhile i < 3 {\n    reassign s as \"n\" + to_string(i)\n    show s\n    reassign i as i + 1\n}",
+        "n0\nn1\nn2\n",
+    );
+}
+#[test]
+fn declare_rejects_reading_before_assignment() {
+    rejects("declare x\nshow x", "may be used before it has a value");
+    rejects(
+        "declare x\nif true {\n    reassign x as 1\n}\nshow x",
+        "may be used before it has a value",
+    );
+    rejects(
+        "declare x\nwhile false {\n    reassign x as 1\n}\nshow x",
+        "may be used before it has a value",
+    );
+}
+#[test]
+fn declare_fixes_the_type_and_rejects_duplicates() {
+    rejects(
+        "declare x\nreassign x as 1\nreassign x as \"s\"",
+        "Type mismatch",
+    );
+    rejects("declare x\ndeclare x", "Duplicate declaration");
+}

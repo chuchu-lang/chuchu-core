@@ -488,6 +488,7 @@ impl Resolver<'_> {
                     self.annotation(&mut field.ty, module, field.span, public)?;
                 }
             }
+            Declare { .. } => {}
             Set { value, .. }
             | Assign { value, .. }
             | AssignField { value, .. }

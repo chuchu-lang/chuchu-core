@@ -11,6 +11,23 @@ reassign x as 6
 show x
 ```
 
+Use `declare name` to create a variable now and give it a value later. Its type
+is fixed by the first `reassign`, and every later assignment must match it. The
+variable can only be read once every path that reaches the read has assigned it,
+so reading it after an `if` that assigns it in only one branch, or after a
+`while` loop, is a compile error:
+
+```chuchu
+declare total
+if true {
+    reassign total as 40
+} else {
+    reassign total as 0
+}
+reassign total as total + 2
+show total
+```
+
 Strings support UTF-8 text, escapes, concatenation, equality and `length`:
 
 ```chuchu

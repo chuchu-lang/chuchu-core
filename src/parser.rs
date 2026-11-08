@@ -358,6 +358,11 @@ impl Parser {
                 let end = value.span.end;
                 (StmtKind::Set { name, value }, end)
             }
+            TokenKind::Declare => {
+                self.advance();
+                let (name, name_span) = self.name()?;
+                (StmtKind::Declare { name }, name_span.end)
+            }
             TokenKind::Reassign => {
                 self.advance();
                 let target_start = self.position;
@@ -1038,6 +1043,24 @@ mod tests {
                 Err(ParseError::ExpectedIdentifier { span })
             );
             assert_eq!(parser.current().map(|token| &token.kind), Some(&kind));
+        }
+    }
+
+    #[test]
+    fn parses_declare_without_a_value() {
+        let mut parser = Parser::new(tokenize("declare x").unwrap());
+        let statement = parser.parse_statement().expect("declare should parse");
+        assert_eq!(
+            statement.kind,
+            StmtKind::Declare {
+                name: "x".to_owned()
+            }
+        );
+        assert_eq!(statement.span, Span { start: 0, end: 9 });
+
+        for source in ["declare", "declare 1", "declare x as 1"] {
+            let mut parser = Parser::new(tokenize(source).unwrap());
+            assert!(parser.parse_program().is_err(), "{source}");
         }
     }
 

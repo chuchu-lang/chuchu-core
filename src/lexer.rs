@@ -131,6 +131,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
                     "use" => TokenKind::Use,
                     "export" => TokenKind::Export,
                     "assign" => TokenKind::Set,
+                    "declare" => TokenKind::Declare,
                     "as" => TokenKind::As,
                     "show" => TokenKind::Show,
                     "true" => TokenKind::True,

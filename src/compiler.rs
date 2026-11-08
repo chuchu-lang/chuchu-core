@@ -105,6 +105,11 @@ impl fmt::Display for CompileError {
                     "Undefined variable {name:?} at {}..{}",
                     span.start, span.end
                 ),
+                TypeError::UseBeforeAssignment { name, span } => write!(
+                    f,
+                    "Variable {name:?} may be used before it has a value at {}..{}; assign it with `reassign {name} as ...` on every path first",
+                    span.start, span.end
+                ),
                 TypeError::DuplicateDeclaration { name, span } => write!(
                     f,
                     "Duplicate declaration of {name:?} at {}..{}",

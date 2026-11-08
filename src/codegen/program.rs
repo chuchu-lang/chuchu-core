@@ -1,6 +1,6 @@
 //! Typed native lowering. Mutable locals and bounded array temporaries live in entry-block
 //! allocations; lexical scopes track storage independently of semantic symbol tables.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use inkwell::builder::{Builder, BuilderError};
 use inkwell::context::Context;
@@ -74,6 +74,9 @@ struct Generator<'ctx> {
     source: Option<crate::source::SourceFile>,
     builder: Builder<'ctx>,
     scopes: Vec<HashMap<String, Binding<'ctx>>>,
+    /// Names made with `declare` that have no storage yet, one set per entry in
+    /// `scopes`. Storage is created at the first assignment, once the type is known.
+    pending: Vec<HashSet<String>>,
     functions: HashMap<String, Function<'ctx>>,
     /// The layout of every declared record; empty for a program without records.
     records: RecordLayouts<'ctx>,
@@ -137,6 +140,7 @@ pub(super) fn generate_with_records<'ctx>(
         debug,
         builder: context.create_builder(),
         scopes: vec![HashMap::new()],
+        pending: vec![HashSet::new()],
         functions: HashMap::new(),
         records,
         result: Type::Int,
@@ -200,6 +204,7 @@ pub(super) fn generate_with_records<'ctx>(
             let function = signature.value;
             let return_type = &signature.result;
             generator.scopes = vec![HashMap::new()];
+            generator.pending = vec![HashSet::new()];
             generator.result = *return_type;
             generator
                 .builder
@@ -253,6 +258,7 @@ pub(super) fn generate_with_records<'ctx>(
         }
     }
     generator.scopes = vec![HashMap::new()];
+    generator.pending = vec![HashSet::new()];
     generator.result = Type::Int;
     let main = generator
         .module
@@ -388,6 +394,65 @@ impl<'ctx> Generator<'ctx> {
             builder.build_alloca(self.llvm_type(ty, span)?, "local"),
             span,
         )
+    }
+    /// Like `allocate`, but the slot starts out zeroed in the entry block, so
+    /// releasing it before a value has been stored frees nothing.
+    fn allocate_zeroed(&self, ty: &Type, span: Span) -> Result<PointerValue<'ctx>, CodegenError> {
+        let entry = self
+            .function(span)?
+            .get_first_basic_block()
+            .ok_or(CodegenError::InvalidInsertionPoint { span })?;
+        let builder = self.context.create_builder();
+        if let Some(first) = entry.get_first_instruction() {
+            builder.position_before(&first);
+        } else {
+            builder.position_at_end(entry);
+        }
+        let llvm = self.llvm_type(ty, span)?;
+        let pointer = build(builder.build_alloca(llvm, "local"), span)?;
+        build(builder.build_store(pointer, llvm.const_zero()), span)?;
+        Ok(pointer)
+    }
+    /// Gives a `declare`d variable its storage the first time it is assigned,
+    /// in the scope that declared it.
+    fn materialize(&mut self, name: &str, value: &Value<'ctx>, span: Span) -> Result<Binding<'ctx>, CodegenError> {
+        let index = self
+            .pending
+            .iter()
+            .rposition(|names| names.contains(name))
+            .ok_or_else(|| CodegenError::UndefinedVariable {
+                name: name.to_owned(),
+                span,
+            })?;
+        let pointer = self.allocate_zeroed(&value.ty, span)?;
+        let binding = Binding {
+            pointer,
+            ty: value.ty,
+        };
+        let llvm = self.llvm_type(&value.ty, span)?;
+        let block = self
+            .builder
+            .get_insert_block()
+            .ok_or(CodegenError::InvalidInsertionPoint { span })?;
+        if let Some(debug) = &mut self.debug {
+            debug.variable(name, binding.clone(), llvm, span, None, block)?;
+        }
+        self.pending[index].remove(name);
+        self.scopes[index].insert(name.to_owned(), binding.clone());
+        Ok(binding)
+    }
+    /// True when `name` resolves to a `declare`d variable with no storage yet,
+    /// rather than to a nearer ordinary binding.
+    fn is_pending(&self, name: &str) -> bool {
+        for index in (0..self.scopes.len()).rev() {
+            if self.scopes[index].contains_key(name) {
+                return false;
+            }
+            if self.pending[index].contains(name) {
+                return true;
+            }
+        }
+        false
     }
     fn lookup(&self, name: &str, span: Span) -> Result<Binding<'ctx>, CodegenError> {
         self.scopes
@@ -933,6 +998,7 @@ impl<'ctx> Generator<'ctx> {
             }
         }
         self.scopes.push(HashMap::new());
+        self.pending.push(HashSet::new());
         let result = self.statements(body).and_then(|()| {
             if !self.terminated() {
                 self.cleanup_strings(
@@ -945,6 +1011,7 @@ impl<'ctx> Generator<'ctx> {
             Ok(())
         });
         self.scopes.pop();
+        self.pending.pop();
         if let Some(debug) = &mut self.debug {
             debug.exit_scope();
         }
@@ -968,6 +1035,29 @@ impl<'ctx> Generator<'ctx> {
                 }
                 let value = self.expression(value)?;
                 self.declare(name, value, span, None)
+            }
+            StmtKind::Declare { name } => {
+                let taken = self.scopes.last().is_some_and(|scope| scope.contains_key(name))
+                    || self.pending.last().is_some_and(|names| names.contains(name));
+                if taken {
+                    return Err(CodegenError::DuplicateDeclaration {
+                        name: name.clone(),
+                        span,
+                    });
+                }
+                self.pending
+                    .last_mut()
+                    .ok_or(invalid("Missing lexical scope", span))?
+                    .insert(name.clone());
+                Ok(())
+            }
+            StmtKind::Assign { name, value } if self.is_pending(name) => {
+                let value = self.expression(value)?;
+                let binding = self.materialize(name, &value, span)?;
+                // This site can run again in a loop, so release what the last run stored.
+                self.release_binding(binding.clone(), span)?;
+                build(self.builder.build_store(binding.pointer, value.raw), span)?;
+                Ok(())
             }
             StmtKind::Assign { name, value } => {
                 let binding = self.lookup(name, span)?;

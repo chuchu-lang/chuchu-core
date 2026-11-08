@@ -149,6 +149,11 @@ pub enum StmtKind {
         name: String,
         value: Expr,
     },
+    /// Declares a variable without a value using `declare name`. Its type is
+    /// fixed by the first `reassign name as value` that follows.
+    Declare {
+        name: String,
+    },
     Show(Expr),
     Assign {
         name: String,
