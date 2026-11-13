@@ -415,7 +415,12 @@ impl<'ctx> Generator<'ctx> {
     }
     /// Gives a `declare`d variable its storage the first time it is assigned,
     /// in the scope that declared it.
-    fn materialize(&mut self, name: &str, value: &Value<'ctx>, span: Span) -> Result<Binding<'ctx>, CodegenError> {
+    fn materialize(
+        &mut self,
+        name: &str,
+        value: &Value<'ctx>,
+        span: Span,
+    ) -> Result<Binding<'ctx>, CodegenError> {
         let index = self
             .pending
             .iter()
@@ -1037,8 +1042,14 @@ impl<'ctx> Generator<'ctx> {
                 self.declare(name, value, span, None)
             }
             StmtKind::Declare { name } => {
-                let taken = self.scopes.last().is_some_and(|scope| scope.contains_key(name))
-                    || self.pending.last().is_some_and(|names| names.contains(name));
+                let taken = self
+                    .scopes
+                    .last()
+                    .is_some_and(|scope| scope.contains_key(name))
+                    || self
+                        .pending
+                        .last()
+                        .is_some_and(|names| names.contains(name));
                 if taken {
                     return Err(CodegenError::DuplicateDeclaration {
                         name: name.clone(),

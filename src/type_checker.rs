@@ -686,10 +686,10 @@ impl TypeChecker {
     /// Checks `reassign variable.field... as value`: the variable exists, each field
     /// is declared by the record before it, and the value fits the last field.
     fn assign_field(&self, target: &FieldTarget, value: &Expr) -> Result<(), TypeError> {
-        let mut ty =
-            self.symbols
-                .lookup(&target.variable)
-                .ok_or_else(|| self.unavailable(&target.variable, target.variable_span))?;
+        let mut ty = self
+            .symbols
+            .lookup(&target.variable)
+            .ok_or_else(|| self.unavailable(&target.variable, target.variable_span))?;
         let mut owner = "";
         let mut object_span = target.variable_span;
         for field in &target.fields {
@@ -975,11 +975,10 @@ impl TypeChecker {
                 self.mismatch(Type::Int, code)?;
                 Ok(Type::Result(*payload))
             }
-            ExprKind::Identifier(name) => {
-                self.symbols
-                    .lookup(name)
-                    .ok_or_else(|| self.unavailable(name, expr.span))
-            }
+            ExprKind::Identifier(name) => self
+                .symbols
+                .lookup(name)
+                .ok_or_else(|| self.unavailable(name, expr.span)),
             ExprKind::Negate(inner) => {
                 let ty = self.infer_expression(inner)?;
                 if ty.is_numeric() {
