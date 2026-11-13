@@ -1,0 +1,154 @@
+use module board
+use module rules
+use module ai
+use module ui
+use module stats
+
+// Plays a single round of Tic-Tac-Toe.
+// mode: 1 = 2P, 2 = Easy AI, 3 = Unbeatable AI
+// Returns: 1 (X wins), 2 (O wins), 3 (Draw), or -1 (User quit mid-game)
+function play_round(mode: int) be int {
+    assign b as board.empty_board()
+    assign current_player as 1
+
+    if mode == 1 {
+        show ""
+        show "--- Starting Player vs Player (X goes first) ---"
+    } else {
+        if mode == 2 {
+            show ""
+            show "--- Starting Player (X) vs Easy AI (O) ---"
+        } else {
+            show ""
+            show "--- Starting Player (X) vs Unbeatable AI (O) ---"
+        }
+    }
+
+    assign playing as true
+    while playing {
+        assign status as rules.game_status(b)
+        if status != 0 {
+            assign _r as ui.render_board(b)
+            if status == 1 {
+                show ">>> Player X wins! <<<"
+            } else {
+                if status == 2 {
+                    if mode == 1 {
+                        show ">>> Player O wins! <<<"
+                    } else {
+                        show ">>> Computer (O) wins! <<<"
+                    }
+                } else {
+                    show ">>> It's a draw! <<<"
+                }
+            }
+            return status
+        }
+
+        // Check if it is the AI's turn (Player O in modes 2 and 3)
+        assign is_ai_turn as false
+        if mode != 1 {
+            if current_player == 2 {
+                reassign is_ai_turn as true
+            }
+        }
+
+        if is_ai_turn {
+            assign ai_pos as 1
+            if mode == 2 {
+                reassign ai_pos as ai.choose_move_easy(b, 2)
+            } else {
+                reassign ai_pos as ai.choose_move_hard(b, 2)
+            }
+            show "Computer (O) chooses square " + to_string(ai_pos)
+            reassign b as board.apply_move(b, ai_pos, 2)
+            reassign current_player as 1
+        } else {
+            assign _r as ui.render_board(b)
+            assign sym as board.player_symbol(current_player)
+            assign choice as ui.prompt_choice("Player " + sym + ", enter square (1-9) or 'q' to quit: ")
+
+            if choice.kind == 1 {
+                show "Returning to main menu..."
+                return -1
+            } else {
+                if choice.kind == 2 {
+                    show "Invalid input! Please enter a number between 1 and 9."
+                } else {
+                    if board.is_valid_move(b, choice.value) {
+                        reassign b as board.apply_move(b, choice.value, current_player)
+                        reassign current_player as board.next_player(current_player)
+                    } else {
+                        show "Square " + to_string(choice.value) + " is invalid or already taken! Try another."
+                    }
+                }
+            }
+        }
+    }
+
+    return 0
+}
+
+assign save_path as "scoreboard.txt"
+assign scores as stats.new_scoreboard()
+assign _b as ui.show_banner()
+
+assign app_running as true
+while app_running {
+    assign _m as ui.show_menu()
+    assign menu_choice as ui.prompt_choice("Choice (1-5): ")
+
+    if menu_choice.kind == 1 {
+        reassign app_running as false
+    } else {
+        if menu_choice.kind == 2 {
+            show "Please enter a valid menu option (1-5)."
+        } else {
+            assign opt as menu_choice.value
+            if opt == 1 {
+                assign outcome as play_round(1)
+                if outcome > 0 {
+                    reassign scores as stats.record_outcome(scores, outcome)
+                    assign _s as ui.show_scores(scores)
+                    assign _w as stats.save_scoreboard(scores, save_path)
+                }
+            } else {
+                if opt == 2 {
+                    assign outcome as play_round(2)
+                    if outcome > 0 {
+                        reassign scores as stats.record_outcome(scores, outcome)
+                        assign _s as ui.show_scores(scores)
+                        assign _w as stats.save_scoreboard(scores, save_path)
+                    }
+                } else {
+                    if opt == 3 {
+                        assign outcome as play_round(3)
+                        if outcome > 0 {
+                            reassign scores as stats.record_outcome(scores, outcome)
+                            assign _s as ui.show_scores(scores)
+                            assign _w as stats.save_scoreboard(scores, save_path)
+                        }
+                    } else {
+                        if opt == 4 {
+                            assign _s as ui.show_scores(scores)
+                            show "Saved disk summary:"
+                            show stats.load_saved_summary(save_path)
+                        } else {
+                            if opt == 5 {
+                                reassign app_running as false
+                            } else {
+                                show "Unknown option: " + to_string(opt) + ". Choose 1 to 5."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+assign bytes_saved as stats.save_scoreboard(scores, save_path)
+show ""
+show "Scoreboard saved to " + save_path + " (" + to_string(bytes_saved) + " bytes)."
+show "Thanks for playing Chuchu Tic-Tac-Toe!"
+

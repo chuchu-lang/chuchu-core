@@ -1,0 +1,86 @@
+module board
+
+// Represents a 3x3 Tic-Tac-Toe board.
+// Cell values: 0 = Empty, 1 = Player X, 2 = Player O
+export record Board {
+    c1: int
+    c2: int
+    c3: int
+    c4: int
+    c5: int
+    c6: int
+    c7: int
+    c8: int
+    c9: int
+    moves: int
+}
+
+export function empty_board() be Board {
+    return Board {
+        c1: 0
+        c2: 0
+        c3: 0
+        c4: 0
+        c5: 0
+        c6: 0
+        c7: 0
+        c8: 0
+        c9: 0
+        moves: 0
+    }
+}
+
+export function get_cell(b: Board, pos: int) be int {
+    if pos == 1 { return b.c1 }
+    if pos == 2 { return b.c2 }
+    if pos == 3 { return b.c3 }
+    if pos == 4 { return b.c4 }
+    if pos == 5 { return b.c5 }
+    if pos == 6 { return b.c6 }
+    if pos == 7 { return b.c7 }
+    if pos == 8 { return b.c8 }
+    if pos == 9 { return b.c9 }
+    return -1
+}
+
+export function is_valid_move(b: Board, pos: int) be bool {
+    if pos < 1 {
+        return false
+    }
+    if pos > 9 {
+        return false
+    }
+    return get_cell(b, pos) == 0
+}
+
+export function apply_move(b: Board, pos: int, player: int) be Board {
+    if pos == 1 { reassign b.c1 as player }
+    if pos == 2 { reassign b.c2 as player }
+    if pos == 3 { reassign b.c3 as player }
+    if pos == 4 { reassign b.c4 as player }
+    if pos == 5 { reassign b.c5 as player }
+    if pos == 6 { reassign b.c6 as player }
+    if pos == 7 { reassign b.c7 as player }
+    if pos == 8 { reassign b.c8 as player }
+    if pos == 9 { reassign b.c9 as player }
+    reassign b.moves as b.moves + 1
+    return b
+}
+
+export function next_player(player: int) be int {
+    if player == 1 {
+        return 2
+    }
+    return 1
+}
+
+export function player_symbol(player: int) be string {
+    if player == 1 {
+        return "X"
+    }
+    if player == 2 {
+        return "O"
+    }
+    return " "
+}
+

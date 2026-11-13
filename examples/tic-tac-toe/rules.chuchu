@@ -1,0 +1,63 @@
+module rules
+
+use module board
+
+function line_winner(a: int, b: int, c: int) be int {
+    if a != 0 {
+        if a == b {
+            if b == c {
+                return a
+            }
+        }
+    }
+    return 0
+}
+
+// Returns 1 if X wins, 2 if O wins, or 0 if there is no winner yet.
+export function check_winner(b: board.Board) be int {
+    // Rows
+    assign w as line_winner(b.c1, b.c2, b.c3)
+    if w != 0 { return w }
+
+    reassign w as line_winner(b.c4, b.c5, b.c6)
+    if w != 0 { return w }
+
+    reassign w as line_winner(b.c7, b.c8, b.c9)
+    if w != 0 { return w }
+
+    // Columns
+    reassign w as line_winner(b.c1, b.c4, b.c7)
+    if w != 0 { return w }
+
+    reassign w as line_winner(b.c2, b.c5, b.c8)
+    if w != 0 { return w }
+
+    reassign w as line_winner(b.c3, b.c6, b.c9)
+    if w != 0 { return w }
+
+    // Diagonals
+    reassign w as line_winner(b.c1, b.c5, b.c9)
+    if w != 0 { return w }
+
+    reassign w as line_winner(b.c3, b.c5, b.c7)
+    if w != 0 { return w }
+
+    return 0
+}
+
+// Game status codes:
+// 0 = Ongoing
+// 1 = Player X wins
+// 2 = Player O wins
+// 3 = Draw
+export function game_status(b: board.Board) be int {
+    assign winner as check_winner(b)
+    if winner != 0 {
+        return winner
+    }
+    if b.moves >= 9 {
+        return 3
+    }
+    return 0
+}
+

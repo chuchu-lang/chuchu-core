@@ -1,0 +1,50 @@
+module stats
+
+export record Scoreboard {
+    x_wins: int
+    o_wins: int
+    draws: int
+    games_played: int
+}
+
+export function new_scoreboard() be Scoreboard {
+    return Scoreboard {
+        x_wins: 0
+        o_wins: 0
+        draws: 0
+        games_played: 0
+    }
+}
+
+export function record_outcome(s: Scoreboard, status: int) be Scoreboard {
+    if status == 1 {
+        reassign s.x_wins as s.x_wins + 1
+    }
+    if status == 2 {
+        reassign s.o_wins as s.o_wins + 1
+    }
+    if status == 3 {
+        reassign s.draws as s.draws + 1
+    }
+    reassign s.games_played as s.games_played + 1
+    return s
+}
+
+export function format_scoreboard(s: Scoreboard) be string {
+    assign p1 as "Games Played: " + to_string(s.games_played) + " | X Wins: " + to_string(s.x_wins)
+    assign p2 as " | O Wins: " + to_string(s.o_wins) + " | Draws: " + to_string(s.draws)
+    return p1 + p2
+}
+
+export function save_scoreboard(s: Scoreboard, path: string) be int {
+    assign content as "=== Chuchu Tic-Tac-Toe Session Summary ===\n" + format_scoreboard(s) + "\n"
+    return write_file(path, content)
+}
+
+export function load_saved_summary(path: string) be string {
+    assign res as try_read_file(path)
+    if is_ok(res) {
+        return unwrap(res)
+    }
+    return "No saved scoreboard file found yet (" + path + ")."
+}
