@@ -1,0 +1,120 @@
+module ai
+
+use module board
+use module rules
+
+// Checks if `player` has an immediate 1-move win; returns 1..9 or 0 if none.
+function find_winning_move(b: board.Board, player: int) be int {
+    assign pos as 1
+    while pos <= 9 {
+        if board.is_valid_move(b, pos) {
+            assign candidate as board.apply_move(b, pos, player)
+            if rules.check_winner(candidate) == player {
+                return pos
+            }
+        }
+        reassign pos as pos + 1
+    }
+    return 0
+}
+
+// Easy AI: takes an immediate win if available, otherwise picks a tactical square
+// without blocking every fork or running full lookahead.
+export function choose_move_easy(b: board.Board, ai_player: int) be int {
+    assign win_now as find_winning_move(b, ai_player)
+    if win_now != 0 {
+        return win_now
+    }
+
+    // Pick first open cell rotated by move count so games feel varied
+    assign idx as 0
+    while idx < 9 {
+        assign raw as b.moves * 3 + idx + 1
+        // Modulo 9 without `%` operator: raw - (raw / 9) * 9
+        assign pos as (raw - (raw / 9) * 9) + 1
+        if board.is_valid_move(b, pos) {
+            return pos
+        }
+        reassign idx as idx + 1
+    }
+    return 1
+}
+
+// Full recursive Minimax search for unbeatable play.
+function minimax(b: board.Board, depth: int, is_maximizing: bool, ai_player: int) be int {
+    assign status as rules.game_status(b)
+    if status != 0 {
+        if status == ai_player {
+            return 10 - depth
+        }
+        if status == 3 {
+            return 0
+        }
+        return depth - 10
+    }
+
+    assign human_player as board.next_player(ai_player)
+
+    if is_maximizing {
+        assign best as -100
+        assign pos as 1
+        while pos <= 9 {
+            if board.is_valid_move(b, pos) {
+                assign next_b as board.apply_move(b, pos, ai_player)
+                assign score as minimax(next_b, depth + 1, false, ai_player)
+                if score > best {
+                    reassign best as score
+                }
+            }
+            reassign pos as pos + 1
+        }
+        return best
+    } else {
+        assign best as 100
+        assign pos as 1
+        while pos <= 9 {
+            if board.is_valid_move(b, pos) {
+                assign next_b as board.apply_move(b, pos, human_player)
+                assign score as minimax(next_b, depth + 1, true, ai_player)
+                if score < best {
+                    reassign best as score
+                }
+            }
+            reassign pos as pos + 1
+        }
+        return best
+    }
+}
+
+// Hard AI: unbeatable Minimax opponent.
+export function choose_move_hard(b: board.Board, ai_player: int) be int {
+    // Instant opening book for empty or 1-move boards
+    if b.moves == 0 {
+        return 5
+    }
+    if b.moves == 1 {
+        if board.is_valid_move(b, 5) {
+            return 5
+        }
+        return 1
+    }
+
+    assign best_score as -100
+    assign best_move as 1
+    assign pos as 1
+
+    while pos <= 9 {
+        if board.is_valid_move(b, pos) {
+            assign next_b as board.apply_move(b, pos, ai_player)
+            assign score as minimax(next_b, 0, false, ai_player)
+            if score > best_score {
+                reassign best_score as score
+                reassign best_move as pos
+            }
+        }
+        reassign pos as pos + 1
+    }
+
+    return best_move
+}
+

@@ -1,0 +1,98 @@
+module ui
+
+use module board
+use module stats
+
+// InputChoice kinds:
+// 0 = Valid integer in `value`
+// 1 = User requested quit ("q", "quit", or EOF)
+// 2 = Non-integer / invalid text
+export record InputChoice {
+    kind: int
+    value: int
+}
+
+function cell_label(b: board.Board, pos: int) be string {
+    assign val as board.get_cell(b, pos)
+    if val == 1 {
+        return "X"
+    }
+    if val == 2 {
+        return "O"
+    }
+    return to_string(pos)
+}
+
+export function show_banner() be int {
+    show "========================================="
+    show "       CHUCHU TIC-TAC-TOE (v1.0)         "
+    show "   100% Native Chuchu + LLVM Game        "
+    show "========================================="
+    return 0
+}
+
+export function show_menu() be int {
+    show ""
+    show "Select a mode:"
+    show "  1) Player vs Player (2P)"
+    show "  2) Player vs AI (Easy)"
+    show "  3) Player vs AI (Unbeatable Minimax)"
+    show "  4) View Session & Saved Scoreboard"
+    show "  5) Save & Quit (or type 'q' anytime)"
+    return 0
+}
+
+export function render_board(b: board.Board) be int {
+    show ""
+    show " " + cell_label(b, 1) + " | " + cell_label(b, 2) + " | " + cell_label(b, 3)
+    show "---+---+---"
+    show " " + cell_label(b, 4) + " | " + cell_label(b, 5) + " | " + cell_label(b, 6)
+    show "---+---+---"
+    show " " + cell_label(b, 7) + " | " + cell_label(b, 8) + " | " + cell_label(b, 9)
+    show ""
+    return 0
+}
+
+export function show_scores(s: stats.Scoreboard) be int {
+    show "-----------------------------------------"
+    show stats.format_scoreboard(s)
+    show "-----------------------------------------"
+    return 0
+}
+
+export function prompt_choice(prompt_text: string) be InputChoice {
+    assign line as try_input(prompt_text)
+    if is_eof(line) {
+        return InputChoice {
+            kind: 1
+            value: 0
+        }
+    }
+    if is_ok(line) {
+        assign text as unwrap(line)
+        if text == "q" {
+            return InputChoice {
+                kind: 1
+                value: 0
+            }
+        }
+        if text == "quit" {
+            return InputChoice {
+                kind: 1
+                value: 0
+            }
+        }
+        assign parsed as parse_int(text)
+        if is_ok(parsed) {
+            return InputChoice {
+                kind: 0
+                value: unwrap(parsed)
+            }
+        }
+    }
+    return InputChoice {
+        kind: 2
+        value: 0
+    }
+}
+
